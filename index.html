@@ -18,6 +18,8 @@
     <script src="/colyseus-sdk/colyseus.js"></script>
 
     <style>
+        /* 防止 Tailwind CDN 加载时的界面闪烁 (FOUC) */
+        [v-cloak] { display: none !important; }
         body {
             touch-action: manipulation;
             -webkit-user-select: none; user-select: none;
@@ -52,7 +54,21 @@
 </head>
 
 <body class="h-screen w-screen" oncontextmenu="return false;">
-<div id="app" class="h-full w-full flex flex-col relative max-w-md mx-auto bg-slate-950 border-x border-slate-800 shadow-2xl text-[10px]">
+<!-- Loading 画面（Vue 挂载后自动消失）-->
+<div id="loading-screen" style="position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#020617;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <div style="font-size:3rem;margin-bottom:1rem;filter:drop-shadow(0 0 20px rgba(99,102,241,0.5));">⚔️</div>
+    <div style="font-size:1.2rem;font-weight:900;letter-spacing:0.2em;margin-bottom:0.25rem;">符文战场</div>
+    <div style="font-size:0.7rem;color:#64748b;letter-spacing:0.3em;margin-bottom:2rem;text-transform:uppercase;">Riftbound · Loading</div>
+    <div style="width:2rem;height:2rem;border:2px solid #6366f1;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+</div>
+<script>
+// Vue 挂载完成后移除 loading 画面
+const _removeLoading = () => { const el = document.getElementById('loading-screen'); if(el) el.remove(); };
+const _origMount = Vue.createApp.prototype?.mount;
+document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading, 300); });
+</script>
+<div id="app" v-cloak class="h-full w-full flex flex-col relative max-w-md mx-auto bg-slate-950 border-x border-slate-800 shadow-2xl text-[10px]">
 
 <!-- ╔══════════════════════════════════════════════════════╗
      ║  1. 登录界面                                          ║
@@ -281,7 +297,7 @@
         <button @click="screen='lobby'" class="text-slate-400 hover:text-white text-xl leading-none transition-colors">←</button>
         <div class="flex-1 min-w-0">
             <h2 class="text-white font-black text-base tracking-widest">🃏 组牌工具</h2>
-            <p class="text-slate-500 text-[10px]">主牌 {{ dbMainCount }} · 符文 {{ dbRuneCount }}/12</p>
+            <p class="text-slate-500 text-[10px]">主牌 {{ dbMainCount }}/40 · 符文 {{ dbRuneCount }}/12</p>
         </div>
         <button @click="dbGenCode"
                 class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded-lg active:scale-95 transition-all shrink-0">
@@ -316,14 +332,30 @@
                         :class="dbTypeFilter===t.v ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
                         class="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors">{{ t.l }}</button>
             </div>
-            <!-- 领域筛选：全部文字 + 六个颜色圆点 -->
+            <!-- 领域筛选：全部文字 + 六个颜色圆点（支持多选） -->
             <div class="flex gap-2 items-center overflow-x-auto hide-scrollbar pb-0.5">
-                <button @click="dbDomainFilter='all'"
-                        :class="dbDomainFilter==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
+                <button @click="dbDomainFilter=[]"
+                        :class="dbDomainFilter.length===0 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
                         class="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors">全部</button>
-                <button v-for="d in DB_DOMAIN_OPTS" :key="d.v" @click="dbDomainFilter=d.v" :title="d.v"
-                        :class="[d.c, dbDomainFilter===d.v ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'opacity-60 hover:opacity-100']"
+                <button v-for="d in DB_DOMAIN_OPTS" :key="d.v"
+                        @click="dbDomainFilter.includes(d.v) ? dbDomainFilter.splice(dbDomainFilter.indexOf(d.v),1) : dbDomainFilter.push(d.v)"
+                        :title="d.v"
+                        :class="[d.c, dbDomainFilter.includes(d.v) ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'opacity-60 hover:opacity-100']"
                         class="shrink-0 w-6 h-6 rounded-full transition-all"></button>
+            </div>
+        </div>
+            <!-- 排序 -->
+            <div class="flex gap-1.5 items-center">
+                <span class="text-slate-600 text-[10px] shrink-0">排序</span>
+                <button @click="dbSortMode='default'"
+                        :class="dbSortMode==='default' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
+                        class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors">默认</button>
+                <button @click="dbSortMode='costAsc'"
+                        :class="dbSortMode==='costAsc' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
+                        class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors">费用↑</button>
+                <button @click="dbSortMode='costDesc'"
+                        :class="dbSortMode==='costDesc' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
+                        class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors">费用↓</button>
             </div>
         </div>
         <!-- 卡牌列表 -->
@@ -351,8 +383,8 @@
                     <span class="text-white text-xs font-bold w-4 text-center">{{ dbGetCount(card) || '' }}</span>
                     <button @click="dbAdd(card)"
                             class="w-6 h-6 rounded-full bg-slate-700 hover:bg-indigo-600 text-white text-xs font-black flex items-center justify-center active:scale-90 transition-all">＋</button>
-                    <!-- 加入备牌（仅普通主牌卡显示） -->
-                    <button v-if="!card.isRune && !card.isBattlefield && !['传奇','英雄单位','专属单位','符文','战场'].includes(card.type)"
+                    <!-- 加入备牌（非符文/传奇/战场，英雄可加入） -->
+                    <button v-if="!card.isRune && !card.isBattlefield && !['传奇','符文','战场'].includes(card.type)"
                             @click="dbAddToSide(card)" title="加入备牌"
                             class="w-6 h-6 rounded-full bg-slate-700 hover:bg-amber-700 text-amber-400 text-[9px] font-black flex items-center justify-center active:scale-90 transition-all">备</button>
                 </div>
@@ -362,26 +394,16 @@
 
     <!-- ── 我的牌组 Tab ── -->
     <div v-if="dbTab==='deck'" class="flex-1 overflow-y-auto hide-scrollbar p-3 space-y-4">
-        <!-- 传奇 & 英雄 -->
+        <!-- 传奇 -->
         <div>
-            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">传奇 & 英雄</p>
-            <div class="space-y-1.5">
-                <div class="flex items-center gap-2 bg-slate-900 border rounded-xl px-3 py-2.5"
-                     :class="dbDeck.legend ? 'border-amber-700/60' : 'border-dashed border-slate-700'">
-                    <span class="text-base shrink-0">👑</span>
-                    <div class="flex-1 text-xs font-bold" :class="dbDeck.legend ? dbTextColor(dbDeck.legend.name) : 'text-slate-600'">
-                        {{ dbDeck.legend?.name ?? '未选传奇' }}
-                    </div>
-                    <button v-if="dbDeck.legend" @click="dbDeck.legend=null" class="text-slate-600 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">传奇</p>
+            <div class="flex items-center gap-2 bg-slate-900 border rounded-xl px-3 py-2.5"
+                 :class="dbDeck.legend ? 'border-amber-700/60' : 'border-dashed border-slate-700'">
+                <span class="text-base shrink-0">👑</span>
+                <div class="flex-1 text-xs font-bold" :class="dbDeck.legend ? dbTextColor(dbDeck.legend.name) : 'text-slate-600'">
+                    {{ dbDeck.legend?.name ?? '未选传奇' }}
                 </div>
-                <div class="flex items-center gap-2 bg-slate-900 border rounded-xl px-3 py-2.5"
-                     :class="dbDeck.champion ? 'border-blue-700/60' : 'border-dashed border-slate-700'">
-                    <span class="text-base shrink-0">🦸</span>
-                    <div class="flex-1 text-xs font-bold" :class="dbDeck.champion ? dbTextColor(dbDeck.champion.name) : 'text-slate-600'">
-                        {{ dbDeck.champion?.name ?? '未选英雄' }}
-                    </div>
-                    <button v-if="dbDeck.champion" @click="dbDeck.champion=null" class="text-slate-600 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
-                </div>
+                <button v-if="dbDeck.legend" @click="dbDeck.legend=null" class="text-slate-600 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
             </div>
         </div>
 
@@ -404,7 +426,7 @@
 
         <!-- 主牌 -->
         <div v-if="Object.keys(dbDeck.main).length > 0">
-            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">主牌 ({{ dbMainCount }})</p>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">主牌 ({{ dbMainCount }}/40)</p>
             <div class="space-y-1">
                 <div v-for="(cnt, name) in dbDeck.main" :key="name"
                      class="flex items-center gap-2 bg-slate-900 rounded-lg px-3 py-2">
@@ -440,7 +462,7 @@
 
         <!-- 备牌（最多10张）-->
         <div>
-            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">备牌 ({{ dbSideCount }}/10)</p>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">备牌 ({{ dbSideCount }}/8)</p>
             <div v-if="Object.keys(dbDeck.sideboard).length === 0" class="text-slate-700 text-xs text-center py-3 border border-dashed border-slate-800 rounded-xl">暂无备牌 · 在卡牌库点"备"添加</div>
             <div class="space-y-1">
                 <div v-for="(cnt, name) in dbDeck.sideboard" :key="name"
@@ -534,7 +556,7 @@
         <div class="text-4xl mb-3">🃏</div>
         <h2 class="text-blue-400 text-lg font-bold mb-1 tracking-widest uppercase">准备卡组</h2>
         <p class="text-slate-500 text-[10px] mb-4 text-center">粘贴 JSON 卡组数据，或使用默认卡组</p>
-        <textarea v-model="deckInput" placeholder='{ "legend":{}, "champion":{}, "main":[], "runes":[], "sideboard":[] }'
+        <textarea v-model="deckInput" placeholder='{ "legend":{}, "main":[], "runes":[], "sideboard":[] }'
                   class="w-full h-44 bg-slate-800 border border-slate-700 rounded-lg p-3 text-[9px] font-mono mb-4 text-slate-300 outline-none focus:border-blue-500 transition-colors resize-none"></textarea>
         <div v-if="dbSavedJson" class="w-full mb-3">
             <button @click="dbLoadSaved"
@@ -2078,8 +2100,9 @@ createApp({
     const dbTab          = ref('browse');   // 'browse' | 'deck'
     const dbSearch       = ref('');
     const dbTypeFilter   = ref('all');
-    const dbDomainFilter = ref('all');
-    const dbDeck = reactive({ legend: null, champion: null, main: {}, runes: {}, sideboard: {}, fields: {} });
+    const dbDomainFilter = ref([]);  // 空数组=全部，非空=多选筛选
+    const dbSortMode = ref('default');  // 'default' | 'costAsc' | 'costDesc'
+    const dbDeck = reactive({ legend: null, main: {}, runes: {}, sideboard: {}, fields: {} });
     const dbCodeModal = reactive({ visible: false, mode: 'export', code: '', copied: false });
     const dbSavedJson = ref('');  // 保存给游戏内加载用
 
@@ -2108,7 +2131,10 @@ createApp({
         else list = list.filter(c => c.type === tf);
       }
       const df = dbDomainFilter.value;
-      if (df !== 'all') list = list.filter(c => c.domain?.includes(df));
+      if (df.length > 0) list = list.filter(c => df.some(d => c.domain?.includes(d)));
+      const sm = dbSortMode.value;
+      if (sm === 'costAsc')  list = [...list].sort((a,b) => (a.energy??99) - (b.energy??99));
+      if (sm === 'costDesc') list = [...list].sort((a,b) => (b.energy??-1) - (a.energy??-1));
       return list.slice(0, 120);
     });
 
@@ -2124,7 +2150,6 @@ createApp({
 
     const dbGetCount = card => {
       if (card.type === '传奇') return dbDeck.legend?.name === card.name ? 1 : 0;
-      if (card.type === '英雄单位' || card.type === '专属单位') return dbDeck.champion?.name === card.name ? 1 : 0;
       if (card.isRune || card.type === '符文') return dbDeck.runes[card.name] || 0;
       if (card.isBattlefield || card.type === '战场') return dbDeck.fields[card.name] || 0;
       return dbDeck.main[card.name] || 0;
@@ -2132,7 +2157,6 @@ createApp({
 
     const dbAdd = card => {
       if (card.type === '传奇')     { dbDeck.legend = card; return; }
-      if (card.type === '英雄单位' || card.type === '专属单位') { dbDeck.champion = card; return; }
       if (card.isRune || card.type === '符文') {
         if (dbRuneCount.value >= 12) return;
         dbDeck.runes[card.name] = (dbDeck.runes[card.name] || 0) + 1; return;
@@ -2141,14 +2165,15 @@ createApp({
         if (dbFieldCount.value >= 3) return;
         dbDeck.fields[card.name] = (dbDeck.fields[card.name] || 0) + 1; return;
       }
+      // 英雄、单位、法术、装备等都进主牌组，每卡最多3张，总数最多40
       const cur = dbDeck.main[card.name] || 0;
-      if (cur >= 4) return;
+      if (cur >= 3) return;
+      if (dbMainCount.value >= 40) return;
       dbDeck.main[card.name] = cur + 1;
     };
 
     const dbRemove = card => {
       if (card.type === '传奇')     { dbDeck.legend = null; return; }
-      if (card.type === '英雄单位' || card.type === '专属单位') { dbDeck.champion = null; return; }
       if (card.isBattlefield || card.type === '战场') {
         const cur = dbDeck.fields[card.name] || 0;
         if (cur <= 1) delete dbDeck.fields[card.name]; else dbDeck.fields[card.name] = cur - 1; return;
@@ -2159,12 +2184,12 @@ createApp({
       if (cur === 1) delete dbDeck[zone][card.name]; else dbDeck[zone][card.name] = cur - 1;
     };
 
-    // 加入备牌（非符文/传奇/英雄/战场，最多4×，备牌总数≤10）
+    // 加入备牌（非符文/传奇/战场，最多3×，备牌总数≤8，英雄可以加入备牌）
     const dbAddToSide = card => {
-      if (['传奇','英雄单位','专属单位','符文','战场'].includes(card.type)) return;
+      if (['传奇','符文','战场'].includes(card.type)) return;
       if (card.isRune || card.isBattlefield) return;
       const cur = dbDeck.sideboard[card.name] || 0;
-      if (cur >= 4 || dbSideCount.value >= 10) return;
+      if (cur >= 3 || dbSideCount.value >= 8) return;
       dbDeck.sideboard[card.name] = cur + 1;
     };
 
@@ -2172,10 +2197,12 @@ createApp({
       const cur = dbDeck[zone][name] || 0;
       const next = cur + delta;
       if (next <= 0) { delete dbDeck[zone][name]; }
-      else if (zone === 'main' && next > 4) return;
+      else if (zone === 'main' && next > 3) return;
+      else if (zone === 'main' && dbMainCount.value >= 40 && delta > 0) return;
       else if (zone === 'fields' && dbFieldCount.value >= 3 && delta > 0) return;
       else if (zone === 'runes' && dbRuneCount.value >= 12 && delta > 0) return;
-      else if (zone === 'sideboard' && dbSideCount.value >= 10 && delta > 0) return;
+      else if (zone === 'sideboard' && dbSideCount.value >= 8 && delta > 0) return;
+      else if (zone === 'sideboard' && next > 3) return;
       else dbDeck[zone][name] = next;
     };
 
@@ -2206,7 +2233,6 @@ createApp({
       const idx = name => all.findIndex(c => c.name === name);
       const payload = {
         l: dbDeck.legend   ? idx(dbDeck.legend.name)   : -1,
-        c: dbDeck.champion ? idx(dbDeck.champion.name) : -1,
         m: Object.entries(dbDeck.main).map(([n,cnt])=>[idx(n),cnt]).filter(([i])=>i>=0),
         r: Object.entries(dbDeck.runes).map(([n,cnt])=>[idx(n),cnt]).filter(([i])=>i>=0),
         s: Object.entries(dbDeck.sideboard).map(([n,cnt])=>[idx(n),cnt]).filter(([i])=>i>=0),
@@ -2225,7 +2251,8 @@ createApp({
         const all = dbAllCards.value.filter(c => !c.isToken);
         const p = JSON.parse(atob(dbCodeModal.code.trim()));
         if (p.l >= 0 && all[p.l]) dbDeck.legend   = all[p.l];
-        if (p.c >= 0 && all[p.c]) dbDeck.champion = all[p.c];
+        // 兼容旧代码：如果有 champion，导入到主牌组
+        if (p.c >= 0 && all[p.c]) { const cn = all[p.c].name; dbDeck.main[cn] = (dbDeck.main[cn]||0) + 1; }
         Object.keys(dbDeck.main).forEach(k => delete dbDeck.main[k]);
         (p.m||[]).forEach(([i,cnt]) => { if(all[i]) dbDeck.main[all[i].name] = cnt; });
         Object.keys(dbDeck.runes).forEach(k => delete dbDeck.runes[k]);
@@ -2249,7 +2276,6 @@ createApp({
       const resolveType = name => (Object.values(cardDb).find(x => x.name === name))?.type || '未知';
       const data = {
         legend:    dbDeck.legend   ? { name: dbDeck.legend.name,   type: dbDeck.legend.type }   : undefined,
-        champion:  dbDeck.champion ? { name: dbDeck.champion.name, type: dbDeck.champion.type } : undefined,
         main:      Object.entries(dbDeck.main).flatMap(([name,cnt]) =>
                      Array(cnt).fill({ name, type: resolveType(name) })),
         runes:     Object.entries(dbDeck.runes).flatMap(([name,cnt]) =>
@@ -2302,7 +2328,7 @@ createApp({
       SIGNALS, signalCooldowns, signalOverlay, sendSignal,
       // 组牌工具
       dbAllCards,
-      dbTab, dbSearch, dbTypeFilter, dbDomainFilter, dbDeck,
+      dbTab, dbSearch, dbTypeFilter, dbDomainFilter, dbSortMode, dbDeck,
       DB_TYPE_OPTS, DB_DOMAIN_OPTS,
       dbFilteredCards, dbMainCount, dbRuneCount, dbSideCount, dbFieldCount,
       dbDomainColor, dbGetCount, dbAdd, dbRemove, dbAdjust, dbAddToSide, dbTextColor,
@@ -2311,6 +2337,10 @@ createApp({
     };
   }
 }).mount('#app');
+// 移除 loading 画面
+const _ls = document.getElementById('loading-screen');
+if (_ls) _ls.style.transition = 'opacity 0.3s'; _ls && (_ls.style.opacity = '0');
+setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) el.remove(); }, 350);
 </script>
 </body>
 </html>
