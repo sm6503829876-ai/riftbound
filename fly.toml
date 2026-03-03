@@ -1,0 +1,25 @@
+# fly.toml — 符文战场 · Riftbound
+# 修改 app 为你自己的应用名（全球唯一），然后运行 fly deploy
+
+app = "riftbound-sm6503"      # 应用名（全球唯一）
+primary_region = "nrt"        # nrt=东京 | sin=新加坡 | hkg=香港（按离玩家近的选）
+
+[build]
+  # 使用根目录 Dockerfile
+
+[http_service]
+  internal_port       = 2567
+  force_https         = true
+  auto_stop_machines  = false   # 不自动睡眠（对实时游戏很重要）
+  auto_start_machines = true
+  min_machines_running = 1      # 保持至少 1 台机器常驻
+
+  [http_service.concurrency]
+    type       = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+[[vm]]
+  memory   = "256mb"
+  cpu_kind = "shared"
+  cpus     = 1

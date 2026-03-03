@@ -1,0 +1,2316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>符文战场 · Riftbound</title>
+
+    <script>
+        window.global = window;
+        window.process = window.process || { env: { NODE_ENV: 'production' } };
+    </script>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="符文战场">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/colyseus-sdk/colyseus.js"></script>
+
+    <style>
+        body {
+            touch-action: manipulation;
+            -webkit-user-select: none; user-select: none;
+            background-color: #020617; color: #e2e8f0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-touch-callout: none;
+        }
+        .tapped        { filter: brightness(0.55) grayscale(0.2); transform: translate(-50%,-50%) rotate(90deg) !important; }
+        .tapped-inline { filter: brightness(0.55) grayscale(0.2); transform: rotate(90deg) !important; }
+        .hand-card:hover { transform: translateY(-18px) scale(1.05) !important; z-index: 60 !important; }
+        .card-back { background: repeating-linear-gradient(45deg,#1e293b,#1e293b 4px,#0f172a 4px,#0f172a 8px); }
+        .draggable { cursor: grab; touch-action: none; } .draggable:active { cursor: grabbing; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .card-img-overlay { position:absolute;inset:0;background-size:cover;background-position:center;border-radius:inherit; }
+        @keyframes slide-in { from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)} }
+        .notify { animation: slide-in 0.3s ease; }
+        @keyframes fade-in { from{opacity:0}to{opacity:1} }
+        .fade-in { animation: fade-in 0.25s ease; }
+        @keyframes signal-pop {
+          0%   { opacity:0; transform:scale(0.4); }
+          30%  { opacity:1; transform:scale(1.15); }
+          55%  { transform:scale(0.95); }
+          70%  { transform:scale(1.05); }
+          100% { opacity:1; transform:scale(1); }
+        }
+        @keyframes signal-fade-out { from{opacity:1} to{opacity:0} }
+        .signal-enter-active { animation: signal-pop 0.45s cubic-bezier(.22,1,.36,1) both; }
+        .signal-leave-active { animation: signal-fade-out 0.3s ease both; }
+    </style>
+</head>
+
+<body class="h-screen w-screen" oncontextmenu="return false;">
+<div id="app" class="h-full w-full flex flex-col relative max-w-md mx-auto bg-slate-950 border-x border-slate-800 shadow-2xl text-[10px]">
+
+<!-- ╔══════════════════════════════════════════════════════╗
+     ║  1. 登录界面                                          ║
+     ╚══════════════════════════════════════════════════════╝ -->
+<div v-if="screen === 'login'" class="absolute inset-0 flex flex-col items-center justify-center p-8 fade-in bg-slate-950">
+    <div class="text-5xl mb-4 drop-shadow-[0_0_20px_rgba(99,102,241,0.5)]">⚔️</div>
+    <h1 class="text-2xl font-black text-white tracking-widest mb-1">符文战场</h1>
+    <p class="text-slate-500 text-xs tracking-[0.3em] mb-10 uppercase">Riftbound · Sandbox</p>
+
+    <div class="w-full max-w-xs space-y-4">
+        <div>
+            <label class="text-slate-400 text-xs uppercase tracking-widest block mb-1.5">你的代号</label>
+            <input v-model="myNickname"
+                   @keydown.enter="enterLobby"
+                   maxlength="12"
+                   placeholder="输入昵称（最多12字符）"
+                   class="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-xl px-4 py-3 text-white text-sm outline-none transition-colors placeholder-slate-600" />
+        </div>
+        <button @click="enterLobby"
+                :disabled="!myNickname.trim()"
+                class="w-full py-3 rounded-xl font-bold text-sm tracking-widest transition-all duration-200 shadow-lg"
+                :class="myNickname.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white active:scale-95' : 'bg-slate-800 text-slate-600 cursor-not-allowed'">
+            进入大厅 →
+        </button>
+        <p v-if="loginError" class="text-red-400 text-xs text-center">{{ loginError }}</p>
+    </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════╗
+     ║  2. 大厅界面                                          ║
+     ╚══════════════════════════════════════════════════════╝ -->
+<div v-if="screen === 'lobby'" class="absolute inset-0 flex flex-col bg-slate-950 fade-in">
+    <!-- 顶栏 -->
+    <div class="flex items-center justify-between px-4 pt-5 pb-3 border-b border-slate-800 shrink-0">
+        <div>
+            <h2 class="text-white font-black text-base tracking-widest">时空大厅</h2>
+            <p class="text-slate-500 text-[10px]">代号：<span class="text-indigo-400 font-bold">{{ myNickname }}</span></p>
+        </div>
+        <button @click="fetchRoomList"
+                :class="lobbyLoading ? 'animate-spin text-indigo-400' : 'text-slate-500 hover:text-white'"
+                class="text-lg transition-colors p-1">🔄</button>
+    </div>
+
+    <!-- 直接加入区（通过 ID 找朋友的房间）-->
+    <div class="px-4 pt-3 pb-3 border-b border-slate-800/60 shrink-0">
+        <div class="flex gap-2">
+            <input v-model="directJoinId"
+                   @keydown.enter="joinRoomById"
+                   placeholder="粘贴房间 ID 直接加入…"
+                   class="flex-1 bg-slate-800/80 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-2 text-white text-xs outline-none transition-colors placeholder-slate-600" />
+            <button @click="joinRoomById"
+                    :disabled="!directJoinId.trim()"
+                    class="px-3 py-2 rounded-lg text-xs font-bold transition-all active:scale-95 shrink-0"
+                    :class="directJoinId.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'">
+                加入
+            </button>
+        </div>
+    </div>
+
+    <!-- 房间列表 -->
+    <div class="flex-1 overflow-y-auto hide-scrollbar p-4 space-y-3">
+        <div v-if="lobbyLoading" class="flex justify-center items-center h-32">
+            <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+
+        <div v-else-if="roomList.length === 0" class="flex flex-col items-center justify-center h-32 text-slate-600">
+            <div class="text-3xl mb-2">🌌</div>
+            <p class="text-sm">暂无活跃房间</p>
+            <p class="text-xs mt-1">创建一个开始吧</p>
+        </div>
+
+        <div v-else>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-3">活跃房间 ({{ roomList.length }})</p>
+            <div v-for="r in roomList" :key="r.roomId"
+                 class="bg-slate-900 border border-slate-800 rounded-xl p-3 hover:border-slate-700 transition-colors">
+                <!-- 主信息行 -->
+                <div class="flex items-start gap-2.5">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-1.5 mb-1.5">
+                            <span v-if="r.metadata?.passwordProtected" class="text-amber-400 text-xs" title="需要密码">🔒</span>
+                            <span class="font-bold text-white text-xs truncate">{{ r.metadata?.roomName || r.roomId }}</span>
+                        </div>
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <div class="flex items-center gap-1">
+                                <div v-for="(nick, i) in [r.metadata?.seats?.[0], r.metadata?.seats?.[1]]" :key="i"
+                                     class="px-1.5 py-0.5 rounded text-[9px] font-bold"
+                                     :class="nick ? 'bg-blue-900 text-blue-300' : 'bg-slate-800 text-slate-600'">
+                                    {{ nick || '空位' }}
+                                </div>
+                            </div>
+                            <span v-if="r.metadata?.spectatorCount" class="text-slate-500 text-[9px]">👁 {{ r.metadata.spectatorCount }}</span>
+                            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                                  :class="r.metadata?.status === 'playing' ? 'bg-amber-900/50 text-amber-400' : 'bg-green-900/50 text-green-400'">
+                                {{ r.metadata?.status === 'playing' ? '对战中' : '等待中' }}
+                            </span>
+                        </div>
+                    </div>
+                    <button @click="openJoinModal(r.roomId, r.metadata?.passwordProtected)"
+                            class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white rounded-lg text-xs font-bold shrink-0 transition-all self-start">
+                        加入
+                    </button>
+                </div>
+                <!-- 房间 ID 行（可复制，方便分享给朋友）-->
+                <div class="flex items-center gap-1.5 mt-2 pt-2 border-t border-slate-800/80">
+                    <span class="text-slate-600 text-[9px] shrink-0">Room ID</span>
+                    <span class="text-slate-500 font-mono text-[9px] flex-1 truncate select-all">{{ r.roomId }}</span>
+                    <button @click.stop="copyRoomId(r.roomId)"
+                            class="text-slate-600 hover:text-indigo-400 text-[9px] font-bold transition-colors px-1.5 py-0.5 rounded hover:bg-slate-800 shrink-0">
+                        复制
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 底部：创建房间 + 组牌工具 -->
+    <div class="p-4 border-t border-slate-800 shrink-0 space-y-2">
+        <button @click="openCreateRoomModal"
+                class="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl text-sm tracking-widest shadow-lg active:scale-95 transition-all">
+            ＋ 创建新房间
+        </button>
+        <div class="flex gap-2">
+            <button @click="screen='deckbuilder'"
+                    class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold rounded-xl text-sm active:scale-95 transition-all border border-slate-700 hover:border-slate-500">
+                🃏 组牌工具
+            </button>
+            <div v-if="dbSavedJson" class="flex items-center gap-1.5 px-3 py-2 bg-emerald-900/40 border border-emerald-700/60 rounded-xl">
+                <div class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
+                <span class="text-emerald-400 text-[10px] font-bold whitespace-nowrap">已保存牌组</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 创建房间弹窗（配置房间，不选角色）-->
+    <div v-if="createRoomModal.visible"
+         class="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-8 fade-in"
+         @click.self="createRoomModal.visible = false">
+        <div class="w-full max-w-xs bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl">
+            <h3 class="text-white font-black text-base text-center mb-5">＋ 创建房间</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-slate-400 text-[10px] uppercase tracking-widest block mb-1.5">房间名称（可选）</label>
+                    <input v-model="createRoomModal.name"
+                           @keydown.enter="doCreateRoom"
+                           placeholder="留空则自动生成"
+                           maxlength="20"
+                           class="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-xl px-3 py-2.5 text-white text-sm outline-none transition-colors placeholder-slate-600" />
+                </div>
+                <div>
+                    <label class="flex items-center gap-3 cursor-pointer select-none">
+                        <div class="relative shrink-0">
+                            <input type="checkbox" v-model="createRoomModal.passwordEnabled" class="sr-only peer" />
+                            <div class="w-9 h-5 bg-slate-700 peer-checked:bg-indigo-600 rounded-full transition-colors"></div>
+                            <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+                        </div>
+                        <span class="text-slate-300 text-sm">🔒 设置房间密码</span>
+                    </label>
+                    <div v-if="createRoomModal.passwordEnabled" class="mt-2">
+                        <input v-model="createRoomModal.password"
+                               type="password"
+                               placeholder="输入密码"
+                               maxlength="20"
+                               class="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-xl px-3 py-2.5 text-white text-sm outline-none transition-colors placeholder-slate-600" />
+                    </div>
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button @click="createRoomModal.visible = false"
+                        class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-sm font-bold transition-colors">
+                    取消
+                </button>
+                <button @click="doCreateRoom"
+                        class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-xl text-sm transition-all active:scale-95">
+                    创建 →
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 密码验证弹窗 -->
+    <div v-if="joinPasswordModal.visible"
+         class="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-8 fade-in"
+         @click.self="!joinPasswordModal.loading && (joinPasswordModal.visible = false)">
+        <div class="w-full max-w-xs bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl">
+            <h3 class="text-white font-black text-base text-center mb-1">🔒 密码房间</h3>
+            <p class="text-slate-500 text-xs text-center mb-5">此房间需要密码才能进入</p>
+            <input v-model="joinPasswordModal.password"
+                   @keydown.enter="doJoinWithPassword"
+                   type="password"
+                   placeholder="输入房间密码"
+                   :disabled="joinPasswordModal.loading"
+                   class="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-xl px-3 py-2.5 text-white text-sm outline-none transition-colors placeholder-slate-600 mb-4 disabled:opacity-50" />
+            <div class="flex gap-3">
+                <button @click="joinPasswordModal.visible = false"
+                        :disabled="joinPasswordModal.loading"
+                        class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-400 rounded-xl text-sm font-bold transition-colors">
+                    取消
+                </button>
+                <button @click="doJoinWithPassword"
+                        :disabled="joinPasswordModal.loading || !joinPasswordModal.password.trim()"
+                        class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-black rounded-xl text-sm transition-all active:scale-95">
+                    {{ joinPasswordModal.loading ? '加入中…' : '加入 →' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 大厅提示气泡 -->
+    <div v-if="lobbyNotice" class="absolute top-16 left-1/2 -translate-x-1/2 z-[60] pointer-events-none notify">
+        <div class="bg-indigo-900/95 border border-indigo-600 text-indigo-200 text-xs font-bold px-4 py-2 rounded-full shadow-xl whitespace-nowrap">{{ lobbyNotice }}</div>
+    </div>
+
+    <!-- 连接错误提示 -->
+    <div v-if="lobbyError" class="absolute bottom-24 left-4 right-4 bg-red-950 border border-red-800 text-red-300 text-xs p-3 rounded-xl">
+        ⚠️ {{ lobbyError }}
+    </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════╗
+     ║  3. 组牌工具界面                                      ║
+     ╚══════════════════════════════════════════════════════╝ -->
+<div v-if="screen === 'deckbuilder'" class="absolute inset-0 flex flex-col bg-slate-950 fade-in">
+
+    <!-- 顶栏 -->
+    <div class="flex items-center gap-3 px-4 pt-5 pb-3 border-b border-slate-800 shrink-0">
+        <button @click="screen='lobby'" class="text-slate-400 hover:text-white text-xl leading-none transition-colors">←</button>
+        <div class="flex-1 min-w-0">
+            <h2 class="text-white font-black text-base tracking-widest">🃏 组牌工具</h2>
+            <p class="text-slate-500 text-[10px]">主牌 {{ dbMainCount }} · 符文 {{ dbRuneCount }}/12</p>
+        </div>
+        <button @click="dbGenCode"
+                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded-lg active:scale-95 transition-all shrink-0">
+            导出代码
+        </button>
+    </div>
+
+    <!-- Tab 切换 -->
+    <div class="flex border-b border-slate-800 shrink-0">
+        <button @click="dbTab='browse'"
+                :class="dbTab==='browse' ? 'text-white border-b-2 border-indigo-500 bg-slate-900/50' : 'text-slate-500 hover:text-slate-300'"
+                class="flex-1 py-2.5 text-xs font-bold transition-colors">
+            卡牌库
+        </button>
+        <button @click="dbTab='deck'"
+                :class="dbTab==='deck' ? 'text-white border-b-2 border-indigo-500 bg-slate-900/50' : 'text-slate-500 hover:text-slate-300'"
+                class="flex-1 py-2.5 text-xs font-bold transition-colors">
+            我的牌组 <span v-if="dbMainCount>0" class="ml-1 text-indigo-400">({{ dbMainCount }})</span>
+        </button>
+    </div>
+
+    <!-- ── 卡牌库 Tab ── -->
+    <div v-if="dbTab==='browse'" class="flex-1 flex flex-col min-h-0">
+        <!-- 搜索 + 筛选 -->
+        <div class="px-3 py-2 space-y-1.5 shrink-0 border-b border-slate-800/60 bg-slate-900/30">
+            <input v-model="dbSearch"
+                   placeholder="搜索卡牌名称或英文名…"
+                   class="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-2 text-white text-xs outline-none transition-colors placeholder-slate-600" />
+            <!-- 类型筛选 -->
+            <div class="flex gap-1.5 overflow-x-auto hide-scrollbar pb-0.5">
+                <button v-for="t in DB_TYPE_OPTS" :key="t.v" @click="dbTypeFilter=t.v"
+                        :class="dbTypeFilter===t.v ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
+                        class="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors">{{ t.l }}</button>
+            </div>
+            <!-- 领域筛选：全部文字 + 六个颜色圆点 -->
+            <div class="flex gap-2 items-center overflow-x-auto hide-scrollbar pb-0.5">
+                <button @click="dbDomainFilter='all'"
+                        :class="dbDomainFilter==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
+                        class="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors">全部</button>
+                <button v-for="d in DB_DOMAIN_OPTS" :key="d.v" @click="dbDomainFilter=d.v" :title="d.v"
+                        :class="[d.c, dbDomainFilter===d.v ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'opacity-60 hover:opacity-100']"
+                        class="shrink-0 w-6 h-6 rounded-full transition-all"></button>
+            </div>
+        </div>
+        <!-- 卡牌列表 -->
+        <div class="flex-1 overflow-y-auto hide-scrollbar px-3 py-2 space-y-1">
+            <p v-if="dbAllCards.length===0" class="text-slate-600 text-xs text-center py-8">卡牌数据加载中…</p>
+            <p v-else-if="dbFilteredCards.length===0" class="text-slate-600 text-xs text-center py-8">无匹配卡牌</p>
+            <div v-for="card in dbFilteredCards" :key="card.id"
+                 class="flex items-center gap-2 bg-slate-900 border border-slate-800/80 hover:border-slate-700 rounded-lg px-2.5 py-2 transition-colors">
+                <!-- 领域色条 -->
+                <div class="w-1 h-9 rounded-full shrink-0" :class="dbDomainColor(card)"></div>
+                <!-- 费用 -->
+                <div class="w-7 text-center shrink-0">
+                    <div class="text-yellow-300 font-black text-sm leading-none">{{ card.energy ?? '—' }}</div>
+                    <div v-if="card.runic" class="text-cyan-400 text-[9px] leading-none mt-0.5">{{ card.runic }}</div>
+                </div>
+                <!-- 卡牌信息 -->
+                <div class="flex-1 min-w-0">
+                    <div class="text-white text-xs font-bold truncate">{{ card.name }}</div>
+                    <div class="text-slate-500 text-[9px] truncate">{{ card.type }}{{ card.might ? ' · ⚔'+card.might : '' }}{{ card.enName ? ' · '+card.enName : '' }}</div>
+                </div>
+                <!-- 数量控制 -->
+                <div class="flex items-center gap-1 shrink-0">
+                    <button @click="dbRemove(card)"
+                            class="w-6 h-6 rounded-full bg-slate-700 hover:bg-red-800 text-white text-xs font-black flex items-center justify-center active:scale-90 transition-all">−</button>
+                    <span class="text-white text-xs font-bold w-4 text-center">{{ dbGetCount(card) || '' }}</span>
+                    <button @click="dbAdd(card)"
+                            class="w-6 h-6 rounded-full bg-slate-700 hover:bg-indigo-600 text-white text-xs font-black flex items-center justify-center active:scale-90 transition-all">＋</button>
+                    <!-- 加入备牌（仅普通主牌卡显示） -->
+                    <button v-if="!card.isRune && !card.isBattlefield && !['传奇','英雄单位','专属单位','符文','战场'].includes(card.type)"
+                            @click="dbAddToSide(card)" title="加入备牌"
+                            class="w-6 h-6 rounded-full bg-slate-700 hover:bg-amber-700 text-amber-400 text-[9px] font-black flex items-center justify-center active:scale-90 transition-all">备</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 我的牌组 Tab ── -->
+    <div v-if="dbTab==='deck'" class="flex-1 overflow-y-auto hide-scrollbar p-3 space-y-4">
+        <!-- 传奇 & 英雄 -->
+        <div>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">传奇 & 英雄</p>
+            <div class="space-y-1.5">
+                <div class="flex items-center gap-2 bg-slate-900 border rounded-xl px-3 py-2.5"
+                     :class="dbDeck.legend ? 'border-amber-700/60' : 'border-dashed border-slate-700'">
+                    <span class="text-base shrink-0">👑</span>
+                    <div class="flex-1 text-xs font-bold" :class="dbDeck.legend ? dbTextColor(dbDeck.legend.name) : 'text-slate-600'">
+                        {{ dbDeck.legend?.name ?? '未选传奇' }}
+                    </div>
+                    <button v-if="dbDeck.legend" @click="dbDeck.legend=null" class="text-slate-600 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
+                </div>
+                <div class="flex items-center gap-2 bg-slate-900 border rounded-xl px-3 py-2.5"
+                     :class="dbDeck.champion ? 'border-blue-700/60' : 'border-dashed border-slate-700'">
+                    <span class="text-base shrink-0">🦸</span>
+                    <div class="flex-1 text-xs font-bold" :class="dbDeck.champion ? dbTextColor(dbDeck.champion.name) : 'text-slate-600'">
+                        {{ dbDeck.champion?.name ?? '未选英雄' }}
+                    </div>
+                    <button v-if="dbDeck.champion" @click="dbDeck.champion=null" class="text-slate-600 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 战场（最多3张）-->
+        <div>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">战场 ({{ dbFieldCount }}/3)</p>
+            <div v-if="Object.keys(dbDeck.fields).length === 0" class="text-slate-700 text-xs text-center py-3 border border-dashed border-slate-800 rounded-xl">暂无战场</div>
+            <div class="space-y-1">
+                <div v-for="(cnt, name) in dbDeck.fields" :key="name"
+                     class="flex items-center gap-2 bg-slate-900 rounded-lg px-3 py-2">
+                    <span :class="dbTextColor(name)" class="text-xs flex-1 truncate">{{ name }}</span>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button @click="dbAdjust(name,'fields',-1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-red-900 text-white text-[10px] font-black flex items-center justify-center">−</button>
+                        <span :class="dbTextColor(name)" class="text-xs font-bold w-5 text-center">×{{ cnt }}</span>
+                        <button @click="dbAdjust(name,'fields',1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">＋</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主牌 -->
+        <div v-if="Object.keys(dbDeck.main).length > 0">
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">主牌 ({{ dbMainCount }})</p>
+            <div class="space-y-1">
+                <div v-for="(cnt, name) in dbDeck.main" :key="name"
+                     class="flex items-center gap-2 bg-slate-900 rounded-lg px-3 py-2">
+                    <span :class="dbTextColor(name)" class="text-xs flex-1 truncate">{{ name }}</span>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button @click="dbAdjust(name,'main',-1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-red-900 text-white text-[10px] font-black flex items-center justify-center">−</button>
+                        <span class="text-indigo-300 text-xs font-bold w-5 text-center">×{{ cnt }}</span>
+                        <button @click="dbAdjust(name,'main',1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">＋</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div v-else class="text-slate-700 text-xs text-center py-4 border border-dashed border-slate-800 rounded-xl">
+            还没有主牌，去卡牌库添加吧
+        </div>
+
+        <!-- 符文 -->
+        <div>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">符文 ({{ dbRuneCount }}/12)</p>
+            <div v-if="Object.keys(dbDeck.runes).length === 0" class="text-slate-700 text-xs text-center py-3 border border-dashed border-slate-800 rounded-xl">暂无符文</div>
+            <div class="space-y-1">
+                <div v-for="(cnt, name) in dbDeck.runes" :key="name"
+                     class="flex items-center gap-2 bg-slate-900 rounded-lg px-3 py-2">
+                    <span :class="dbTextColor(name)" class="text-xs flex-1">{{ name }}</span>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button @click="dbAdjust(name,'runes',-1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-red-900 text-white text-[10px] font-black flex items-center justify-center">−</button>
+                        <span :class="dbTextColor(name)" class="text-xs font-bold w-5 text-center">×{{ cnt }}</span>
+                        <button @click="dbAdjust(name,'runes',1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">＋</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 备牌（最多10张）-->
+        <div>
+            <p class="text-slate-600 text-[10px] uppercase tracking-widest mb-2">备牌 ({{ dbSideCount }}/10)</p>
+            <div v-if="Object.keys(dbDeck.sideboard).length === 0" class="text-slate-700 text-xs text-center py-3 border border-dashed border-slate-800 rounded-xl">暂无备牌 · 在卡牌库点"备"添加</div>
+            <div class="space-y-1">
+                <div v-for="(cnt, name) in dbDeck.sideboard" :key="name"
+                     class="flex items-center gap-2 bg-slate-900 rounded-lg px-3 py-2">
+                    <span :class="dbTextColor(name)" class="text-xs flex-1 truncate">{{ name }}</span>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button @click="dbAdjust(name,'sideboard',-1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-red-900 text-white text-[10px] font-black flex items-center justify-center">−</button>
+                        <span :class="dbTextColor(name)" class="text-xs font-bold w-5 text-center">×{{ cnt }}</span>
+                        <button @click="dbAdjust(name,'sideboard',1)" class="w-5 h-5 rounded-full bg-slate-700 hover:bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">＋</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="space-y-2 pt-2 border-t border-slate-800">
+            <button @click="dbUseDeck"
+                    class="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black rounded-xl text-sm tracking-widest shadow-lg active:scale-95 transition-all">
+                ✨ 使用此牌组
+            </button>
+            <div class="flex gap-2">
+                <button @click="dbGenCode" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs active:scale-95 transition-all">📋 导出代码</button>
+                <button @click="dbImportCode" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs active:scale-95 transition-all">📥 导入代码</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 代码弹窗 -->
+    <div v-if="dbCodeModal.visible"
+         class="absolute inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-end justify-center p-4 fade-in"
+         @click.self="dbCodeModal.visible=false">
+        <div class="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl mb-2">
+            <h3 class="text-white font-black text-sm text-center mb-1">
+                {{ dbCodeModal.mode==='export' ? '📋 牌组代码' : '📥 导入牌组' }}
+            </h3>
+            <p class="text-slate-500 text-[10px] text-center mb-3">
+                {{ dbCodeModal.mode==='export' ? '复制代码可分享或导入游戏' : '粘贴代码以恢复牌组' }}
+            </p>
+            <textarea v-model="dbCodeModal.code"
+                      :readonly="dbCodeModal.mode==='export'"
+                      rows="5"
+                      class="w-full bg-slate-800 border border-slate-700 focus:border-indigo-500 rounded-xl px-3 py-2.5 text-indigo-300 text-[11px] font-mono outline-none resize-none break-all leading-relaxed"
+                      @click="dbCodeModal.mode==='export' && $event.target.select()"></textarea>
+            <div class="flex gap-3 mt-4">
+                <button @click="dbCodeModal.visible=false"
+                        class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-sm font-bold transition-colors">关闭</button>
+                <button v-if="dbCodeModal.mode==='export'" @click="dbCopyCode"
+                        class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold active:scale-95 transition-all">
+                    {{ dbCodeModal.copied ? '✅ 已复制' : '复制' }}
+                </button>
+                <button v-if="dbCodeModal.mode==='import'" @click="dbDoImport"
+                        class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold active:scale-95 transition-all">导入</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════╗
+     ║  4. 游戏界面                                          ║
+     ╚══════════════════════════════════════════════════════╝ -->
+<template v-if="screen === 'game'">
+
+    <!-- 游戏内角色选择（进房后第一步）-->
+    <div v-if="showRoleOverlay"
+         class="absolute inset-0 bg-slate-900/80 backdrop-blur-md z-[95] flex flex-col items-center justify-center p-8 fade-in">
+        <div class="text-5xl mb-4 drop-shadow-[0_0_20px_rgba(99,102,241,0.5)]">⚔️</div>
+        <h2 class="text-white font-black text-xl mb-1 tracking-widest">选择身份</h2>
+        <p class="text-slate-500 text-xs mb-8 text-center">你想以何种身份进入这场对局？</p>
+        <div class="w-full max-w-xs space-y-3">
+            <button @click="claimRole('player')"
+                    class="w-full flex items-center gap-4 p-4 bg-blue-950 border-2 border-blue-700 hover:border-blue-400 rounded-xl transition-all active:scale-95">
+                <span class="text-2xl">⚔️</span>
+                <div class="text-left">
+                    <div class="text-blue-300 font-black text-sm">坐下对战</div>
+                    <div class="text-slate-500 text-[10px]">参与本场对局，操控你的卡组</div>
+                </div>
+            </button>
+            <button @click="claimRole('spectator')"
+                    class="w-full flex items-center gap-4 p-4 bg-slate-800 border-2 border-slate-700 hover:border-slate-500 rounded-xl transition-all active:scale-95">
+                <span class="text-2xl">👁</span>
+                <div class="text-left">
+                    <div class="text-slate-300 font-black text-sm">观战</div>
+                    <div class="text-slate-500 text-[10px]">旁观本场对局，无法操作卡牌</div>
+                </div>
+            </button>
+        </div>
+    </div>
+
+    <!-- 卡组导入（仅玩家看到）-->
+    <div v-if="showDeckLoader" class="absolute inset-0 bg-slate-900/97 z-[90] flex flex-col items-center justify-center p-6">
+        <div class="text-4xl mb-3">🃏</div>
+        <h2 class="text-blue-400 text-lg font-bold mb-1 tracking-widest uppercase">准备卡组</h2>
+        <p class="text-slate-500 text-[10px] mb-4 text-center">粘贴 JSON 卡组数据，或使用默认卡组</p>
+        <textarea v-model="deckInput" placeholder='{ "legend":{}, "champion":{}, "main":[], "runes":[], "sideboard":[] }'
+                  class="w-full h-44 bg-slate-800 border border-slate-700 rounded-lg p-3 text-[9px] font-mono mb-4 text-slate-300 outline-none focus:border-blue-500 transition-colors resize-none"></textarea>
+        <div v-if="dbSavedJson" class="w-full mb-3">
+            <button @click="dbLoadSaved"
+                    class="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-full font-bold shadow-lg transition-colors flex items-center justify-center gap-2">
+                <span>✨</span> 加载已保存牌组
+            </button>
+        </div>
+        <div class="flex space-x-3 w-full">
+            <button @click="loadDefaultDeck" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-full font-bold transition-colors">使用默认</button>
+            <button @click="importDeck" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-bold shadow-lg transition-colors">确认导入</button>
+        </div>
+        <p class="text-slate-600 text-[9px] mt-3">支持字段：name / type / cost / power / health / description / image</p>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div v-if="zoneMenu.visible"
+         class="fixed z-[300] bg-slate-800 border-2 border-slate-600 rounded-lg shadow-2xl flex flex-col overflow-hidden w-28"
+         :style="{ left: zoneMenu.x+'px', top: zoneMenu.y+'px' }" @click.stop>
+        <button @click="viewZone(zoneMenu.zoneId)" class="px-4 py-3 text-white text-sm font-bold border-b border-slate-700 hover:bg-slate-700 flex items-center justify-between">检视 <span>🔍</span></button>
+        <button @click="shuffleZone(zoneMenu.zoneId)" class="px-4 py-3 text-white text-sm font-bold hover:bg-slate-700 flex items-center justify-between">洗牌 <span>🔀</span></button>
+    </div>
+
+    <!-- 检视弹窗 -->
+    <div v-if="viewingZone"
+         class="absolute inset-0 bg-slate-950/98 z-[150] flex flex-col p-4 pb-12 backdrop-blur-sm transition-opacity duration-300"
+         :class="isViewerHiddenForDrag ? 'opacity-0 pointer-events-none' : 'opacity-100'">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-blue-400 text-base font-bold uppercase tracking-widest flex items-center gap-2">
+                {{ getZoneName(viewingZone) }}
+                <span class="bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded text-xs">{{ currentZoneArray.length }}</span>
+            </h2>
+            <div class="flex space-x-2">
+                <button @click="shuffleZone(viewingZone)" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-bold text-white transition-colors">洗牌 🔀</button>
+                <button @click="viewingZone = null" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-white transition-colors">关闭 ✕</button>
+            </div>
+        </div>
+        <p v-if="currentZoneArray.length === 0" class="text-slate-500 text-center mt-16 text-sm">该区域为空</p>
+        <div class="flex-1 overflow-y-auto hide-scrollbar grid grid-cols-4 gap-2.5 content-start pb-16">
+            <div v-for="(card, idx) in currentZoneArray" :key="card.id"
+                 class="w-full aspect-[2/3] rounded-lg overflow-hidden shadow-md relative border-2 cursor-grab active:cursor-grabbing"
+                 :class="cardBorder(card)"
+                 draggable="true"
+                 @dragstart="onDragStartFromViewer($event, card, viewingZone, idx)"
+                 @dragend="onDragEndFromViewer"
+                 @touchstart="onCardTouchStartFromViewer($event, card, viewingZone, idx)"
+                 @contextmenu.prevent="inspectCard(card, viewingZone)">
+                <div class="absolute inset-0 rounded-lg" :class="cardGradient(card)"></div>
+                <div class="relative z-10 h-full flex flex-col p-1.5">
+                    <div class="flex justify-between items-start">
+                        <div class="leading-none">
+                            <div class="text-[10px] font-black text-yellow-300">{{ card.energy??'—' }}</div>
+                            <div v-if="card.runic" class="text-[8px] text-cyan-300 leading-none">{{ card.runic }}</div>
+                        </div>
+                        <div v-if="card.might" class="text-[11px] font-black text-red-300 leading-none">{{ card.might }}</div>
+                    </div>
+                    <div class="flex-1 flex items-center justify-center">
+                        <span class="text-[10px] font-bold text-white text-center leading-snug">{{ card.name }}</span>
+                    </div>
+                    <div class="text-[8px] text-slate-400 leading-none">{{ card.type }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 单卡特写弹窗 -->
+    <div v-if="inspectingCard"
+         class="absolute inset-0 bg-black/85 z-[200] flex items-center justify-center p-4 backdrop-blur-sm"
+         @click.self="inspectingCard = null">
+        <div class="w-full max-w-[300px] max-h-[88vh] border-2 rounded-2xl flex flex-col relative shadow-2xl overflow-hidden"
+             :class="[cardBorder(inspectingCard.card), cardGradient(inspectingCard.card)]">
+            <button @click="inspectingCard = null" class="absolute -top-3 -right-3 w-8 h-8 bg-red-600 rounded-full text-white font-bold border-2 border-slate-800 flex items-center justify-center shadow-lg z-10 text-sm">✕</button>
+
+            <!-- 固定顶部：卡名 + 类型 + 属性 -->
+            <div class="p-4 pb-2 shrink-0">
+                <!-- 稀有度 + 卡名 -->
+                <div class="flex items-start justify-center gap-2 mb-1.5">
+                    <span v-if="inspectingCard.card.rarity" class="text-[9px] text-slate-400 mt-1 shrink-0">{{ inspectingCard.card.rarity }}</span>
+                    <h3 class="text-xl font-black text-white leading-tight text-center">{{ inspectingCard.card.name }}</h3>
+                </div>
+                <!-- 类型 + 领域 -->
+                <div class="flex flex-wrap gap-1.5 justify-center mb-3">
+                    <span class="text-xs font-bold px-2 py-0.5 rounded-full" :class="getCardTypeTagClass(inspectingCard.card.type)">{{ inspectingCard.card.type || '未知' }}</span>
+                    <span v-for="d in (inspectingCard.card.domain||[])" :key="d" class="text-[10px] px-1.5 py-0.5 rounded-full bg-black/40 border border-white/20 text-white/80">{{ d }}</span>
+                </div>
+                <!-- 属性面板 -->
+                <div class="flex justify-center gap-5 bg-black/40 rounded-xl py-2.5 px-2">
+                    <div class="text-center">
+                        <div class="text-[9px] text-yellow-400 font-bold tracking-wider mb-0.5">费用</div>
+                        <div class="text-2xl font-black text-yellow-300">{{ inspectingCard.card.energy ?? '—' }}</div>
+                    </div>
+                    <div v-if="inspectingCard.card.runic != null" class="text-center">
+                        <div class="text-[9px] text-cyan-400 font-bold tracking-wider mb-0.5">符能</div>
+                        <div class="text-2xl font-black text-cyan-300">{{ inspectingCard.card.runic }}</div>
+                    </div>
+                    <div v-if="inspectingCard.card.might != null" class="text-center">
+                        <div class="text-[9px] text-red-400 font-bold tracking-wider mb-0.5">战力</div>
+                        <div class="text-2xl font-black text-red-300">{{ inspectingCard.card.might }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 可滚动中部：效果文字 + 风味文字 -->
+            <div class="flex-1 overflow-y-auto hide-scrollbar px-4 py-2 min-h-0">
+                <!-- 效果文字 -->
+                <div v-if="inspectingCard.card.effect" class="bg-black/40 rounded-xl px-3 py-2.5 mb-2">
+                    <p class="text-[11px] text-slate-100 leading-relaxed" v-html="renderEffect(inspectingCard.card.effect)"></p>
+                </div>
+                <!-- 风味文字 -->
+                <div v-if="inspectingCard.card.flavor" class="px-1 mb-1">
+                    <p class="text-[10px] text-slate-500 italic leading-snug">{{ inspectingCard.card.flavor }}</p>
+                </div>
+            </div>
+
+            <!-- 固定底部：指示物 + 删除 -->
+            <div class="px-4 py-3 border-t border-white/10 shrink-0 flex items-center justify-between gap-2 bg-black/20">
+                <div class="flex items-center space-x-3 bg-black/50 rounded-full px-2 py-1 border border-slate-800">
+                    <button @click="modifyToken(-1)" :disabled="isSpectator" class="w-8 h-8 rounded-full bg-slate-700 text-slate-300 text-lg font-bold hover:bg-slate-600 active:scale-90 flex items-center justify-center transition-transform disabled:opacity-40">−</button>
+                    <span class="text-yellow-400 font-black text-xl w-7 text-center drop-shadow-[0_0_8px_rgba(250,204,21,0.6)]">{{ inspectingCard.card.tokens || 0 }}</span>
+                    <button @click="modifyToken(1)" :disabled="isSpectator" class="w-8 h-8 rounded-full bg-slate-700 text-yellow-500 text-lg font-bold hover:bg-slate-600 active:scale-90 flex items-center justify-center transition-transform disabled:opacity-40">+</button>
+                </div>
+                <button @click="!isSpectator && deleteInspectedCard()" :disabled="isSpectator"
+                        class="px-3 py-1.5 bg-red-900/80 hover:bg-red-700 border border-red-600/60 text-red-200 text-[11px] font-bold rounded-full transition-colors disabled:opacity-40 shrink-0">
+                    🗑 移除
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知横幅 -->
+    <div v-if="syncNotice" class="absolute top-[3.75rem] left-1/2 -translate-x-1/2 z-[80] notify pointer-events-none">
+        <div class="bg-indigo-900/90 border border-indigo-500 text-indigo-200 text-xs font-bold px-4 py-2 rounded-full shadow-xl backdrop-blur-sm whitespace-nowrap">{{ syncNotice }}</div>
+    </div>
+
+    <!-- ═══ TCG 手势信号浮层 ═══ -->
+    <transition name="signal">
+        <div v-if="signalOverlay.visible"
+             class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-[300]">
+            <div class="text-[72px] leading-none drop-shadow-[0_0_30px_rgba(255,255,255,0.35)] select-none">{{ signalOverlay.icon }}</div>
+            <div class="mt-2 text-2xl font-black tracking-widest drop-shadow-[0_0_12px_rgba(0,0,0,0.8)] select-none"
+                 :class="signalOverlay.color">{{ signalOverlay.label }}</div>
+            <div class="mt-1 text-[10px] text-slate-400 select-none">— {{ signalOverlay.sender }} —</div>
+        </div>
+    </transition>
+
+    <!-- 断线重连遮罩 -->
+    <!-- ─────── 指示物召唤弹窗 ─────────────────────────────── -->
+    <div v-if="showTokenFetch && !isSpectator"
+         class="absolute inset-0 bg-black/80 z-[400] flex flex-col backdrop-blur-sm"
+         @click.self="showTokenFetch=false">
+        <div class="bg-slate-900 border-b-2 border-cyan-700 p-3 flex items-center gap-2">
+            <span class="text-cyan-400 font-black text-sm shrink-0">🪄 召唤指示物</span>
+            <input v-model="tokenQuery" type="text" placeholder="搜索卡名…"
+                   class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500 transition-colors"
+                   autofocus>
+            <button @click="showTokenFetch=false" class="text-slate-500 hover:text-white text-lg leading-none">✕</button>
+        </div>
+        <div class="flex-1 overflow-y-auto hide-scrollbar p-3 grid grid-cols-3 gap-2 auto-rows-max content-start">
+            <div v-for="c in tokenResults" :key="c.id"
+                 @click="spawnTokenCard(c)"
+                 @touchstart.passive="onTokenTouchStart"
+                 @touchend="e => onTokenTouchEnd(e, c)"
+                 class="aspect-[2/3] w-full rounded-lg border-2 overflow-hidden relative cursor-pointer active:scale-95 transition-transform self-start"
+                 style="touch-action: manipulation"
+                 :class="cardBorder(c)">
+                <div class="absolute inset-0 pointer-events-none" :class="cardGradient(c)"></div>
+                <div class="relative z-10 h-full flex flex-col p-1.5 pointer-events-none">
+                    <div class="flex justify-between items-start">
+                        <span class="text-[9px] font-black text-yellow-300">{{ c.energy??'—' }}</span>
+                        <span v-if="c.might" class="text-[10px] font-black text-red-300">{{ c.might }}</span>
+                    </div>
+                    <div class="flex-1 flex items-center justify-center">
+                        <span class="text-[10px] font-bold text-white text-center leading-snug">{{ c.name }}</span>
+                    </div>
+                    <div class="text-[8px] text-slate-400">{{ c.type }}</div>
+                </div>
+            </div>
+            <p v-if="tokenResults.length===0" class="col-span-3 text-slate-500 text-center text-sm pt-8">没有找到匹配的指示物</p>
+        </div>
+        <p class="text-center text-[10px] text-slate-600 pb-3">点击卡牌，将它加入手牌</p>
+    </div>
+
+    <div v-if="reconnecting" class="absolute inset-0 bg-slate-950/92 z-[600] flex flex-col items-center justify-center backdrop-blur-sm">
+        <div class="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-5"></div>
+        <p class="text-white font-bold text-sm mb-1">{{ reconnectMsg || '连接断开，正在重连…' }}</p>
+        <p class="text-slate-500 text-xs mb-8">请保持网络连接</p>
+        <button @click="leaveRoom" class="text-slate-600 text-xs hover:text-red-400 transition-colors underline">放弃重连，返回大厅</button>
+    </div>
+
+    <!-- ─────── 游戏顶栏（房间状态 + 操作按钮）──────────────── -->
+    <div class="shrink-0 flex flex-col bg-slate-950 border-b border-slate-800 z-[40]">
+        <!-- 行 1：状态 + 玩家名 | 操作按钮 -->
+        <div class="flex items-center gap-2 px-3 pt-2 pb-1">
+            <div class="flex-1 flex items-center gap-1.5 min-w-0 overflow-hidden">
+                <div class="w-1.5 h-1.5 rounded-full shrink-0 transition-colors duration-500"
+                     :class="playerCount === 2 ? 'bg-green-500 shadow-[0_0_4px_#22c55e]' : 'bg-yellow-500 animate-pulse'"></div>
+                <div class="flex items-center gap-1 min-w-0">
+                    <template v-for="(s,i) in seats" :key="'hd-s-'+i">
+                        <span v-if="i===1" class="text-slate-700 text-[8px] shrink-0">vs</span>
+                        <span class="text-[9px] font-bold truncate max-w-[5rem]"
+                              :class="s ? (s.sessionId===mySessionId ? 'text-blue-400' : 'text-slate-300') : 'text-slate-700'">
+                            {{ s?.nickname || '空位' }}
+                        </span>
+                    </template>
+                    <span v-if="isSpectator" class="text-purple-400 text-[8px] font-bold shrink-0 ml-0.5">· 观战</span>
+                    <span v-if="spectators.length" class="text-slate-600 text-[8px] shrink-0 ml-0.5">👁{{ spectators.length }}</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+                <button v-if="myRole && !showRoleOverlay"
+                        @click="requestSwitchRole"
+                        class="text-[9px] font-bold px-2 py-1 rounded-lg border transition-all active:scale-90"
+                        :class="isSpectator
+                            ? 'bg-blue-950/80 border-blue-800 text-blue-400 hover:border-blue-500'
+                            : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:border-purple-700 hover:text-purple-400'">
+                    {{ isSpectator ? '🪑 坐下' : '👁 起立' }}
+                </button>
+                <button @click="leaveRoom"
+                        class="text-[9px] font-bold px-2 py-1 rounded-lg border border-red-900/70 bg-red-950/40 text-red-500 hover:border-red-700 hover:bg-red-900/50 transition-all active:scale-90">
+                    ✕ 离开
+                </button>
+            </div>
+        </div>
+        <!-- 行 2：房间 ID + 复制（紧贴排列，不撑满整行）-->
+        <div class="flex items-center gap-1.5 px-3 pb-2">
+            <span class="text-slate-700 text-[8px] shrink-0 uppercase tracking-wider">Room</span>
+            <span class="text-slate-500 font-mono text-[8px] shrink-0 select-all">{{ myRoomId }}</span>
+            <button @click="copyRoomId(myRoomId)"
+                    class="text-[8px] font-bold text-slate-600 hover:text-indigo-400 px-1.5 py-0.5 rounded hover:bg-slate-800 transition-colors shrink-0 active:scale-90">
+                复制
+            </button>
+        </div>
+    </div>
+
+    <!-- 对手区域包装（手牌浮标 + 资源，relative 隔离定位）-->
+    <div class="relative shrink-0">
+        <div class="absolute top-0 left-0 w-full flex justify-center z-20 pointer-events-none">
+            <div class="flex items-center space-x-0.5 bg-black/80 rounded-b-lg px-3 py-1 border-b border-x border-slate-700">
+                <div v-for="i in (oppState.handCount || 0)" :key="'opp-h-'+i" class="w-3 h-5 card-back border border-slate-600 rounded-[2px]"></div>
+                <span v-if="!oppState.handCount" class="text-slate-700 text-[8px] px-1">无手牌</span>
+            </div>
+        </div>
+        <!-- ─────── 对手阵地 ───────────────────────────────────── -->
+        <div class="flex justify-between items-center px-2 pt-2 pb-1 bg-red-950/10 border-b-2 border-red-900/40">
+        <div class="flex flex-col space-y-1 shrink-0">
+            <div class="w-10 h-12 border border-red-800/50 bg-red-900/20 rounded flex flex-col items-center justify-center text-red-400"><span class="text-[8px]">废牌</span><span class="font-bold text-xs">{{ oppState.discard }}</span></div>
+            <div class="w-10 h-12 border-2 border-red-800/50 card-back rounded flex flex-col items-center justify-center text-red-300"><span class="text-[8px]">主牌</span><span class="font-bold text-xs">{{ oppState.deckCount }}</span></div>
+        </div>
+        <div class="flex-1 flex justify-center items-center px-1 overflow-x-auto hide-scrollbar">
+            <div class="grid grid-cols-6 gap-1 w-max">
+                <div v-for="i in 12" :key="'opp-r-'+i" class="w-10 h-12 border rounded-sm transition-all" :class="i<=(oppState.runesCount||0)?'bg-red-800 border-red-500':'border-red-900/30 bg-red-950/20'"></div>
+            </div>
+        </div>
+        <div class="flex space-x-1.5 shrink-0">
+            <div class="flex flex-col space-y-1">
+                <div class="w-10 h-12 border rounded flex items-center justify-center text-[7px] text-center p-0.5" :class="oppStaticCards['champion']?'bg-red-800 border-red-500 text-red-100':'border-red-800/50 bg-red-900/20 text-red-500'">{{ oppStaticCards['champion']?.name||'英雄' }}</div>
+                <div class="w-10 h-12 border border-red-800/50 bg-red-900/20 rounded flex flex-col items-center justify-center text-red-400"><span class="text-[7px]">符文</span><span class="font-bold text-xs">{{ oppState.runesCount }}</span></div>
+            </div>
+            <div class="flex flex-col space-y-1">
+                <div class="w-10 h-12 border rounded flex items-center justify-center text-[7px] text-center p-0.5" :class="oppStaticCards['legend']?'bg-red-800 border-red-500 text-red-100':'border-red-800/50 bg-red-900/20 text-red-500'">{{ oppStaticCards['legend']?.name||'传奇' }}</div>
+                <div class="w-10 h-12 border border-red-800/50 bg-red-900/20 rounded flex flex-col items-center justify-center text-red-400"><span class="text-[7px]">备牌</span><span class="font-bold text-xs">{{ oppState.sideboardCount }}</span></div>
+            </div>
+        </div>
+        </div><!-- /对手阵地 -->
+    </div><!-- /对手区域包装 -->
+
+    <!-- ─────── 核心战场 ────────────────────────────────────── -->
+    <div class="flex-1 flex flex-col relative overflow-hidden">
+
+        <!-- 左右战道竖向分割线（贯穿整个战场） -->
+        <div class="absolute inset-y-0 left-1/2 w-px bg-slate-500/30 z-30 pointer-events-none"></div>
+
+        <!-- 对手基地（与对手前线无缝合并，无下边界） -->
+        <div class="h-12 w-full shrink-0 relative">
+            <div v-for="unit in opponentBaseUnits" :key="unit.id"
+                 class="absolute w-12 h-16 border-2 rounded overflow-hidden shadow-lg z-40"
+                 :class="[cardBorder(unit), unit.tapped?'tapped':'']"
+                 :style="{left:(100-(unit.x||50))+'%',top:(100-(unit.y||50))+'%',transform:'translate(-50%,-50%)'}">
+                <div class="absolute inset-0" :class="cardGradient(unit)"></div>
+                <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
+                <div class="relative z-10 h-full flex flex-col p-0.5">
+                    <div class="flex justify-between items-start">
+                        <span class="text-[7px] font-black text-yellow-300 leading-none">{{ unit.energy??'—' }}<span v-if="unit.runic" class="text-cyan-300">·{{ unit.runic }}</span></span>
+                        <span v-if="unit.might" class="text-[8px] font-black text-red-300 leading-none">{{ unit.might }}</span>
+                    </div>
+                    <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
+                    <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 对手前线（开放战场空间，不画边框，避免视觉混乱） -->
+        <div class="flex-1 flex">
+            <div v-for="idx in [0,1]" :key="'obf-'+idx" class="flex-1 relative bg-red-950/5">
+                <div v-for="unit in opponentBoardUnits[idx]" :key="unit.id"
+                     class="absolute w-12 h-16 border-2 rounded overflow-hidden transition-transform shadow-md z-40"
+                     :class="[cardBorder(unit), unit.tapped?'tapped':'']"
+                     :style="{left:(100-(unit.x||50))+'%',top:(100-(unit.y||50))+'%',transform:'translate(-50%,-50%)'}">
+                    <div class="absolute inset-0" :class="cardGradient(unit)"></div>
+                    <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
+                    <div class="relative z-10 h-full flex flex-col p-0.5">
+                        <div class="flex justify-between items-start">
+                            <span class="text-[7px] font-black text-yellow-300 leading-none">{{ unit.energy??'—' }}<span v-if="unit.runic" class="text-cyan-300">·{{ unit.runic }}</span></span>
+                            <span v-if="unit.might" class="text-[8px] font-black text-red-300 leading-none">{{ unit.might }}</span>
+                        </div>
+                        <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
+                        <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中轴：细分界线，两端战场格，中央计分器 -->
+        <div class="w-full h-16 bg-slate-900/95 border-y border-slate-600/70 shadow-lg z-20 shrink-0 flex items-center relative">
+            <!-- 左战场格（紧贴左侧边缘，对应左战道） -->
+            <div @dragover.prevent @drop.stop="!isSpectator && onDrop($event,'field-0')"
+                 data-zone="field-0"
+                 class="shrink-0 w-14 h-full border-r-2 flex items-center justify-center overflow-hidden relative transition-all"
+                 :class="fieldCards[0]?cardBorder(fieldCards[0]):'border-r-amber-700/50 bg-amber-950/20'">
+                <span v-if="!fieldCards[0]" class="text-[7px] text-amber-600/35 font-bold tracking-widest pointer-events-none select-none">战场</span>
+                <div v-else class="w-full h-full relative overflow-hidden"
+                     :class="!isSpectator ? 'draggable' : ''"
+                     :draggable="!isSpectator"
+                     @dragstart="!isSpectator && onDragStart($event, fieldCards[0], 'field', 0)"
+                     @touchstart="!isSpectator && onCardTouchStart($event, fieldCards[0], 'field', 0)"
+                     @contextmenu.prevent="inspectCard(fieldCards[0], 'field')">
+                    <div class="absolute inset-0" :class="cardGradient(fieldCards[0])"></div>
+                    <div v-if="fieldCards[0].tokens" class="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[6px] z-20">{{ fieldCards[0].tokens>0?'+':'' }}{{ fieldCards[0].tokens }}</div>
+                    <div class="relative z-10 h-full flex flex-col p-0.5">
+                        <span class="text-[6px] font-black text-yellow-300 leading-none">{{ fieldCards[0].energy??'—' }}</span>
+                        <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ fieldCards[0].name }}</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 中央计分器（竖排：对方在上，己方在下） -->
+            <div class="flex-1 flex flex-col items-center justify-center gap-1 z-30">
+                <!-- 对方得分 -->
+                <div class="flex items-center gap-1 bg-black/80 rounded px-1.5 py-0.5 border border-red-900/60">
+                    <button @click="!isSpectator && changeScore('opponent',-1)" :disabled="isSpectator" class="w-4 h-4 bg-slate-800 text-slate-400 font-bold rounded flex items-center justify-center text-[10px] leading-none disabled:opacity-40">-</button>
+                    <span class="text-red-400 font-black text-sm w-5 text-center leading-none">{{ oppState.score }}</span>
+                    <button @click="!isSpectator && changeScore('opponent',1)" :disabled="isSpectator" class="w-4 h-4 bg-slate-800 text-red-400 font-bold rounded flex items-center justify-center text-[10px] leading-none disabled:opacity-40">+</button>
+                </div>
+                <!-- 己方得分 -->
+                <div class="flex items-center gap-1 bg-black/80 rounded px-1.5 py-0.5 border border-blue-900/60">
+                    <button @click="!isSpectator && changeScore('player',-1)" :disabled="isSpectator" class="w-4 h-4 bg-slate-800 text-slate-400 font-bold rounded flex items-center justify-center text-[10px] leading-none disabled:opacity-40">-</button>
+                    <span class="text-blue-400 font-black text-sm w-5 text-center leading-none">{{ playerScore }}</span>
+                    <button @click="!isSpectator && changeScore('player',1)" :disabled="isSpectator" class="w-4 h-4 bg-slate-800 text-blue-400 font-bold rounded flex items-center justify-center text-[10px] leading-none disabled:opacity-40">+</button>
+                </div>
+            </div>
+
+            <!-- 右战场格（紧贴右侧边缘，对应右战道） -->
+            <div @dragover.prevent @drop.stop="!isSpectator && onDrop($event,'field-1')"
+                 data-zone="field-1"
+                 class="shrink-0 w-14 h-full border-l-2 flex items-center justify-center overflow-hidden relative transition-all"
+                 :class="fieldCards[1]?cardBorder(fieldCards[1]):'border-l-amber-700/50 bg-amber-950/20'">
+                <span v-if="!fieldCards[1]" class="text-[7px] text-amber-600/35 font-bold tracking-widest pointer-events-none select-none">战场</span>
+                <div v-else class="w-full h-full relative overflow-hidden"
+                     :class="!isSpectator ? 'draggable' : ''"
+                     :draggable="!isSpectator"
+                     @dragstart="!isSpectator && onDragStart($event, fieldCards[1], 'field', 1)"
+                     @touchstart="!isSpectator && onCardTouchStart($event, fieldCards[1], 'field', 1)"
+                     @contextmenu.prevent="inspectCard(fieldCards[1], 'field')">
+                    <div class="absolute inset-0" :class="cardGradient(fieldCards[1])"></div>
+                    <div v-if="fieldCards[1].tokens" class="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[6px] z-20">{{ fieldCards[1].tokens>0?'+':'' }}{{ fieldCards[1].tokens }}</div>
+                    <div class="relative z-10 h-full flex flex-col p-0.5">
+                        <span class="text-[6px] font-black text-yellow-300 leading-none">{{ fieldCards[1].energy??'—' }}</span>
+                        <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ fieldCards[1].name }}</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 玩家前线（与基地无缝合并为一个视觉半场） -->
+        <div class="flex-1 flex">
+            <div v-for="idx in [0,1]" :key="'pbf-'+idx"
+                 @dragover.prevent @drop.stop="!isSpectator && onDrop($event,idx)"
+                 :data-zone="'board-'+idx"
+                 class="flex-1 relative bg-blue-950/5">
+                <div v-for="unit in playerBoardUnits[idx]" :key="unit.id"
+                     @dblclick.stop="!isSpectator && toggleTap(unit,idx)"
+                     @contextmenu.prevent="inspectCard(unit,'board')"
+                     :draggable="!isSpectator"
+                     @dragstart="!isSpectator && onDragStart($event,unit,'board',idx)"
+                     @touchstart="!isSpectator && onCardTouchStart($event,unit,'board',idx)"
+                     class="absolute w-12 h-16 border-2 rounded overflow-hidden shadow-lg transition-transform z-40"
+                     :class="[cardBorder(unit), unit.tapped?'tapped':'', !isSpectator?'draggable':'']"
+                     :style="{left:unit.x+'%',top:unit.y+'%',transform:'translate(-50%,-50%)'}">
+                    <div class="absolute inset-0" :class="cardGradient(unit)"></div>
+                    <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow-sm">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
+                    <div class="relative z-10 h-full flex flex-col p-0.5">
+                        <div class="flex justify-between items-start">
+                            <span class="text-[7px] font-black text-yellow-300 leading-none">{{ unit.energy??'—' }}<span v-if="unit.runic" class="text-cyan-300">·{{ unit.runic }}</span></span>
+                            <span v-if="unit.might" class="text-[8px] font-black text-red-300 leading-none">{{ unit.might }}</span>
+                        </div>
+                        <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
+                        <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 玩家基地（与玩家前线无缝合并，无上边界） -->
+        <div @dragover.prevent @drop.stop="!isSpectator && onDrop($event,'base')" data-zone="base" class="h-12 w-full shrink-0 relative">
+            <div v-for="unit in playerBaseUnits" :key="unit.id"
+                 @dblclick.stop="!isSpectator && toggleTap(unit,'base')"
+                 @contextmenu.prevent="inspectCard(unit,'base')"
+                 :draggable="!isSpectator"
+                 @dragstart="!isSpectator && onDragStart($event,unit,'board','base')"
+                 @touchstart="!isSpectator && onCardTouchStart($event,unit,'board','base')"
+                 class="absolute w-12 h-16 border-2 rounded overflow-hidden shadow-lg transition-transform z-40"
+                 :class="[cardBorder(unit), unit.tapped?'tapped':'', !isSpectator?'draggable':'']"
+                 :style="{left:unit.x+'%',top:unit.y+'%',transform:'translate(-50%,-50%)'}">
+                <div class="absolute inset-0" :class="cardGradient(unit)"></div>
+                <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow-sm">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
+                <div class="relative z-10 h-full flex flex-col p-0.5">
+                    <div class="flex justify-between items-start">
+                        <span class="text-[7px] font-black text-yellow-300 leading-none">{{ unit.energy??'—' }}<span v-if="unit.runic" class="text-cyan-300">·{{ unit.runic }}</span></span>
+                        <span v-if="unit.might" class="text-[8px] font-black text-red-300 leading-none">{{ unit.might }}</span>
+                    </div>
+                    <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
+                    <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─────── 玩家资源区 ─────────────────────────────────── -->
+    <div class="flex justify-between items-center px-2 py-2 bg-blue-950/10 border-t-2 border-blue-900/40 z-10 shrink-0">
+        <div class="flex space-x-1.5 shrink-0">
+            <div class="flex flex-col space-y-1">
+                <!-- 传奇格 -->
+                <div @dragover.prevent @drop.stop="!isSpectator && onDrop($event,'legend')"
+                     @contextmenu.prevent="openZoneMenu($event,'legend')"
+                     data-zone="legend"
+                     class="w-10 h-12 border-2 rounded flex items-center justify-center text-[7px] font-bold text-center p-0.5 transition-all relative overflow-hidden cursor-pointer"
+                     :class="playerStaticCards['legend']?cardBorder(playerStaticCards['legend']):'border-blue-700/40 bg-blue-900/20 text-blue-500'">
+                    <span v-if="!playerStaticCards['legend']" class="pointer-events-none">传奇</span>
+                    <template v-else>
+                        <div class="absolute inset-0" :class="cardGradient(playerStaticCards['legend'])"></div>
+                        <div v-if="playerStaticCards['legend'].tokens" class="absolute top-0 right-0 w-3.5 h-3.5 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[7px] z-10">{{ playerStaticCards['legend'].tokens>0?'+':'' }}{{ playerStaticCards['legend'].tokens }}</div>
+                        <span class="relative z-10 text-[7px] font-bold text-white text-center leading-tight px-0.5 drop-shadow" :class="playerStaticCards['legend'].tapped?'rotate-90':''">{{ playerStaticCards['legend'].name }}</span>
+                    </template>
+                </div>
+                <!-- 备牌 -->
+                <div @dragover.prevent @drop.stop="!isSpectator && onDropToSideboard($event)"
+                     @contextmenu.prevent="openZoneMenu($event,'sideboard')"
+                     data-zone="sideboard"
+                     class="w-10 h-12 border border-blue-700/40 bg-blue-900/20 rounded flex flex-col items-center justify-center text-blue-400 shadow-inner cursor-pointer hover:bg-blue-900/40 transition-colors">
+                    <span class="text-[7px] pointer-events-none">备牌</span>
+                    <span class="font-bold text-xs pointer-events-none">{{ playerSideboard.length }}</span>
+                </div>
+            </div>
+            <div class="flex flex-col space-y-1">
+                <!-- 英雄格 -->
+                <div @dragover.prevent @drop.stop="!isSpectator && onDrop($event,'champion')"
+                     @contextmenu.prevent="openZoneMenu($event,'champion')"
+                     data-zone="champion"
+                     class="w-10 h-12 border-2 rounded flex items-center justify-center text-[7px] font-bold text-center p-0.5 transition-all relative overflow-hidden cursor-pointer"
+                     :class="playerStaticCards['champion']?cardBorder(playerStaticCards['champion']):'border-blue-700/40 bg-blue-900/20 text-blue-500'">
+                    <span v-if="!playerStaticCards['champion']" class="pointer-events-none">英雄</span>
+                    <template v-else>
+                        <div class="absolute inset-0" :class="cardGradient(playerStaticCards['champion'])"></div>
+                        <div v-if="playerStaticCards['champion'].tokens" class="absolute top-0 right-0 w-3.5 h-3.5 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[7px] z-10">{{ playerStaticCards['champion'].tokens>0?'+':'' }}{{ playerStaticCards['champion'].tokens }}</div>
+                        <span class="relative z-10 text-[7px] font-bold text-white text-center leading-tight px-0.5 drop-shadow" :class="playerStaticCards['champion'].tapped?'rotate-90':''">{{ playerStaticCards['champion'].name }}</span>
+                    </template>
+                </div>
+                <!-- 符文堆 -->
+                <div @click="!isSpectator && spawnRune()"
+                     @dragover.prevent @drop.stop="!isSpectator && onDropToRuneDeck($event)"
+                     @contextmenu.prevent="openZoneMenu($event,'runeDeck')"
+                     data-zone="runeDeck"
+                     class="w-10 h-12 border-2 border-cyan-600 bg-cyan-950 rounded card-back flex flex-col items-center justify-center text-cyan-200 font-bold transition-all active:scale-90 shadow-lg"
+                     :class="!isSpectator ? 'cursor-pointer' : 'cursor-default'">
+                    <span class="text-[7px] pointer-events-none">符文堆</span>
+                    <span class="text-xs pointer-events-none">{{ playerRuneDeckCount }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 符文行 -->
+        <div class="flex-1 flex justify-center items-center px-1 overflow-x-auto hide-scrollbar">
+            <div class="grid grid-cols-6 gap-1 w-max">
+                <div v-for="(rune,i) in playerRunes" :key="i"
+                     class="w-10 h-12 border-2 rounded-sm transition-all shadow-sm relative shrink-0 overflow-hidden"
+                     :class="[rune ? runeColor(rune) + ' z-10' : 'border-dashed border-cyan-800/40 bg-cyan-950/20', rune&&rune.tapped?'tapped-inline':'', rune&&!isSpectator?'draggable cursor-pointer':'']"
+                     :draggable="!!(rune && !isSpectator)"
+                     @dragstart="rune && !isSpectator && onDragStart($event,rune,'rune',i)"
+                     @touchstart="rune && !isSpectator && onCardTouchStart($event,rune,'rune',i)"
+                     @click="rune && !isSpectator && handleRuneClick(i)"
+                     @dblclick.stop="rune && !isSpectator && handleRuneDblClick(i)">
+                    <!-- 纯色格，无文字 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 主牌 + 废牌 -->
+        <div class="flex flex-col space-y-1 shrink-0">
+            <div @click="!isSpectator && drawCard(false)"
+                 @dragover.prevent @drop.stop="!isSpectator && onDropToDeck($event)"
+                 @contextmenu.prevent="openZoneMenu($event,'deck')"
+                 data-zone="deck"
+                 class="w-10 h-12 border-2 border-blue-400 bg-blue-900 rounded card-back flex flex-col items-center justify-center text-blue-100 font-bold transition-all active:scale-90 shadow-lg"
+                 :class="!isSpectator ? 'cursor-pointer' : 'cursor-default'">
+                <span class="text-[7px] pointer-events-none">主牌</span>
+                <span class="text-xs pointer-events-none">{{ mainDeck.length }}</span>
+            </div>
+            <div @dragover.prevent @drop.stop="!isSpectator && onDropToDiscard($event)"
+                 @contextmenu.prevent="openZoneMenu($event,'discard')"
+                 data-zone="discard"
+                 class="w-10 h-12 border border-blue-700/40 bg-blue-900/20 rounded flex flex-col items-center justify-center text-blue-400 shadow-inner hover:bg-blue-900/40 transition-colors"
+                 :class="!isSpectator ? 'cursor-pointer' : 'cursor-default'">
+                <span class="text-[7px] pointer-events-none">废牌</span>
+                <span class="font-bold text-xs pointer-events-none">{{ playerDiscard.length }}</span>
+            </div>
+            <!-- 召唤指示物按钮 -->
+            <button v-if="!isSpectator" @click="showTokenFetch=true"
+                    class="w-10 h-7 mt-1 border border-cyan-700/50 bg-cyan-950/40 rounded flex items-center justify-center text-cyan-400 hover:bg-cyan-900/50 hover:border-cyan-500 active:scale-90 transition-all"
+                    title="召唤指示物">
+                <span class="text-[10px]">🪄</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ─────── TCG 手势信号按钮 ────────────────────────────── -->
+    <div v-if="!isSpectator" class="shrink-0 flex justify-center gap-1.5 px-2 py-1 z-50">
+        <button v-for="sig in SIGNALS" :key="sig.key"
+                @click="sendSignal(sig.key)"
+                :disabled="signalCooldowns[sig.key]"
+                class="flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl border font-bold transition-all duration-150 active:scale-90 select-none min-w-[3.2rem]"
+                :class="signalCooldowns[sig.key]
+                    ? 'border-slate-700 bg-slate-800/50 text-slate-600 cursor-not-allowed opacity-60'
+                    : 'border-slate-600 bg-slate-800/80 text-slate-200 hover:border-slate-400 hover:bg-slate-700/80'">
+            <span class="text-base leading-none">{{ sig.icon }}</span>
+            <span class="text-[8px] leading-none font-bold tracking-wide">{{ sig.label }}</span>
+        </button>
+    </div>
+
+    <!-- ─────── 手牌（固定在底部，随牌数自然展开）─────────── -->
+    <div class="shrink-0 flex justify-center items-end px-2 pb-2 pt-1 space-x-[-10px] z-50 min-h-[5.5rem]" data-zone="hand">
+        <div v-for="(card,idx) in playerHand" :key="card.id"
+             @contextmenu.prevent="inspectCard(card,'hand')"
+             class="hand-card w-14 h-[4.5rem] rounded-xl shadow-2xl transition-all duration-200 border-2 z-40 relative overflow-hidden"
+             :class="[cardBorder(card), !isSpectator ? 'draggable' : '']"
+             :draggable="!isSpectator"
+             @dragstart="!isSpectator && onDragStart($event,card,'hand',idx)"
+             @touchstart="!isSpectator && onCardTouchStart($event,card,'hand',idx)">
+            <div class="absolute inset-0 rounded-xl" :class="cardGradient(card)"></div>
+            <div v-if="card.tokens" class="absolute -top-2 -right-2 w-5 h-5 bg-yellow-400 text-yellow-900 font-black rounded-full flex items-center justify-center text-[10px] z-20 shadow">{{ card.tokens>0?'+':'' }}{{ card.tokens }}</div>
+            <div class="relative z-10 h-full flex flex-col p-1.5 pointer-events-none">
+                <div class="flex justify-between items-start">
+                    <div class="leading-none">
+                        <div class="text-[10px] font-black text-yellow-300">{{ card.energy??'—' }}</div>
+                        <div v-if="card.runic" class="text-[8px] text-cyan-300 leading-none">{{ card.runic }}</div>
+                    </div>
+                    <div v-if="card.might" class="text-[11px] font-black text-red-300 leading-none">{{ card.might }}</div>
+                </div>
+                <div class="flex-1 flex items-center justify-center">
+                    <span class="text-[9px] font-bold text-white text-center leading-tight">{{ card.name }}</span>
+                </div>
+                <div class="text-[7px] text-slate-400 leading-none">{{ card.type }}</div>
+            </div>
+        </div>
+    </div>
+
+</template><!-- /game -->
+</div><!-- /app -->
+
+<!-- ╔══════════════════════════════════════════════════════╗
+     ║  Vue 3 应用逻辑                                       ║
+     ╚══════════════════════════════════════════════════════╝ -->
+<script>
+const { createApp, ref, shallowRef, reactive, computed, onMounted } = Vue;
+
+createApp({
+  setup() {
+
+    // ══ 屏幕 & 身份 ════════════════════════════════════════════
+    const screen      = ref('login');   // 'login' | 'lobby' | 'game'
+    const myNickname  = ref('');
+    const myRole      = ref('');        // 'player' | 'spectator'
+    const mySeatIndex = ref(-1);        // 0 | 1 | -1(观战)
+    const mySessionId = ref('');
+    const isSpectator = computed(() => myRole.value === 'spectator');
+
+    // ══ 连接 ════════════════════════════════════════════════════
+    const colyseusClient = shallowRef(null);  // Colyseus.Client 实例
+    const room           = shallowRef(null);  // Room 实例（必须 shallowRef）
+    const loginError     = ref('');
+
+    // ══ 大厅 ════════════════════════════════════════════════════
+    const roomList          = ref([]);
+    const lobbyLoading      = ref(false);
+    const lobbyError        = ref('');
+    const lobbyNotice       = ref('');
+    const directJoinId      = ref('');
+    const createRoomModal   = reactive({ visible: false, name: '', passwordEnabled: false, password: '' });
+    const joinPasswordModal = reactive({ visible: false, roomId: null, password: '', loading: false });
+    const showRoleOverlay   = ref(false);
+    const myRoomId          = ref('');
+    let lobbyRefreshTimer = null;
+    let lobbyNoticeTimer  = null;
+
+    // ══ 游戏 UI ═════════════════════════════════════════════════
+    const showDeckLoader      = ref(false);
+    const deckInput           = ref('');
+    const syncNotice          = ref('');
+    const viewingZone         = ref(null);
+    const inspectingCard      = ref(null);
+    const zoneMenu            = reactive({ visible: false, x: 0, y: 0, zoneId: null });
+    const isViewerHiddenForDrag = ref(false);
+    const draggedCard         = ref(null);
+    const reconnecting        = ref(false);
+    const reconnectMsg        = ref('');
+    const playerCount         = ref(0);
+    const showTokenFetch      = ref(false);
+    const tokenQuery          = ref('');
+    const cardDb              = reactive({});   // 卡牌数据库 name→entry
+    const dbAllCards          = ref([]);        // 组牌工具用：卡牌完整数组
+
+    // 花名册
+    const seats     = reactive([null, null]);
+    const spectators = reactive([]);
+
+    // ══ 玩家牌区 ════════════════════════════════════════════════
+    const mainDeck         = reactive([]);
+    const playerHand       = reactive([]);
+    const playerDiscard    = reactive([]);
+    const playerSideboard  = reactive([]);
+    const playerBaseUnits  = reactive([]);
+    const playerBoardUnits = reactive([[], []]);
+    const playerStaticCards = reactive({ champion: null, legend: null });
+    const fieldCards        = reactive([null, null]);
+    const runeDeck          = reactive([]);
+    const playerRunes       = reactive(Array(12).fill(null));
+    const playerRuneDeckCount = computed(() => runeDeck.length);
+    const playerScore       = ref(0);
+    let runeClickTimer = null;
+
+    // ══ 对手状态 ════════════════════════════════════════════════
+    const oppState           = reactive({ score:0, deckCount:40, discard:0, sideboardCount:8, runesCount:0, handCount:0 });
+
+    // ══ TCG 手势信号 ════════════════════════════════════════════
+    const SIGNALS = [
+      { key:'WAIT',  icon:'❗', label:'WAIT!', color:'text-red-400'     },
+      { key:'PASS',  icon:'🤝', label:'PASS',  color:'text-green-400'   },
+      { key:'THINK', icon:'🤔', label:'长考',  color:'text-yellow-400'  },
+      { key:'OKASK', icon:'👌', label:'OK?',   color:'text-cyan-400'    },
+      { key:'OKBANG',icon:'✅', label:'OK！',  color:'text-emerald-400' },
+    ];
+    const signalCooldowns = reactive({ WAIT:false, PASS:false, THINK:false, OKASK:false, OKBANG:false });
+    const signalOverlay   = reactive({ visible:false, icon:'', label:'', color:'', sender:'' });
+    let _signalTimer = null;
+
+    const showSignalOverlay = (sig, senderName) => {
+      if (_signalTimer) clearTimeout(_signalTimer);
+      signalOverlay.visible = true;
+      signalOverlay.icon    = sig.icon;
+      signalOverlay.label   = sig.label;
+      signalOverlay.color   = sig.color;
+      signalOverlay.sender  = senderName;
+      _signalTimer = setTimeout(() => { signalOverlay.visible = false; }, 2200);
+    };
+
+    const sendSignal = (key) => {
+      if (isSpectator.value || signalCooldowns[key]) return;
+      signalCooldowns[key] = true;
+      setTimeout(() => { signalCooldowns[key] = false; }, 1000);
+      const sig = SIGNALS.find(s => s.key === key);
+      if (!sig) return;
+      showSignalOverlay(sig, myNickname.value);
+      room.value?.send('gameAction', { type:'SIGNAL', signal:key, senderName:myNickname.value });
+    };
+    const opponentBaseUnits  = reactive([]);
+    const opponentBoardUnits = reactive([[], []]);
+    const oppStaticCards     = reactive({ champion: null, legend: null });
+
+    // ══ 卡牌类型 & 领域样式 ═════════════════════════════════════
+    const DOMAIN_STYLES = {
+      '烈焰': { border:'border-red-400',    gradient:'bg-gradient-to-b from-red-900/90 to-slate-950/95'    },
+      '静谧': { border:'border-green-400',  gradient:'bg-gradient-to-b from-green-900/90 to-slate-950/95'  },
+      '心智': { border:'border-sky-400',    gradient:'bg-gradient-to-b from-sky-900/90 to-slate-950/95'    },
+      '形体': { border:'border-orange-400', gradient:'bg-gradient-to-b from-orange-900/90 to-slate-950/95' },
+      '混沌': { border:'border-purple-400', gradient:'bg-gradient-to-b from-purple-900/90 to-slate-950/95' },
+      '秩序': { border:'border-yellow-500', gradient:'bg-gradient-to-b from-yellow-900/90 to-slate-950/95' },
+    };
+    const TYPE_STYLES = {
+      '传奇':     { border:'border-yellow-300', gradient:'bg-gradient-to-b from-yellow-800/90 to-slate-950/95',  tag:'bg-yellow-900 text-yellow-300',  emoji:'👑' },
+      '英雄单位':  { border:'border-emerald-400',gradient:'bg-gradient-to-b from-emerald-900/90 to-slate-950/95',tag:'bg-emerald-900 text-emerald-300',emoji:'🦸' },
+      '专属单位':  { border:'border-teal-400',   gradient:'bg-gradient-to-b from-teal-900/90 to-slate-950/95',   tag:'bg-teal-900 text-teal-300',      emoji:'⭐' },
+      '单位':     { border:'border-blue-400',   gradient:'bg-gradient-to-b from-blue-900/90 to-slate-950/95',   tag:'bg-blue-900 text-blue-300',      emoji:'⚔️' },
+      '指示物单位': { border:'border-cyan-300',  gradient:'bg-gradient-to-b from-cyan-950/80 to-slate-950/95',  tag:'bg-cyan-900 text-cyan-300',      emoji:'🪄' },
+      '专属法术':  { border:'border-rose-400',   gradient:'bg-gradient-to-b from-rose-900/90 to-slate-950/95',   tag:'bg-rose-900 text-rose-300',      emoji:'✨' },
+      '法术':     { border:'border-purple-400', gradient:'bg-gradient-to-b from-purple-900/90 to-slate-950/95', tag:'bg-purple-900 text-purple-300',  emoji:'✨' },
+      '专属装备':  { border:'border-amber-400',  gradient:'bg-gradient-to-b from-amber-900/90 to-slate-950/95',  tag:'bg-amber-900 text-amber-300',    emoji:'🗡️' },
+      '指示物装备': { border:'border-yellow-300', gradient:'bg-gradient-to-b from-yellow-950/80 to-slate-950/95',tag:'bg-yellow-900 text-yellow-300',  emoji:'🪄' },
+      '装备':     { border:'border-orange-400', gradient:'bg-gradient-to-b from-orange-900/90 to-slate-950/95', tag:'bg-orange-900 text-orange-300',  emoji:'🛡️' },
+      '战场':     { border:'border-amber-500',  gradient:'bg-gradient-to-b from-amber-900/90 to-slate-950/95',  tag:'bg-amber-900 text-amber-300',    emoji:'🏛️' },
+      '符文':     { border:'border-cyan-400',   gradient:'bg-gradient-to-b from-cyan-900/90 to-slate-950/95',   tag:'bg-cyan-900 text-cyan-300',      emoji:'🔮' },
+      // 旧兼容
+      '英雄':  { border:'border-emerald-400',gradient:'bg-gradient-to-b from-emerald-900/90 to-slate-950/95',tag:'bg-emerald-900 text-emerald-300',emoji:'🦸' },
+      '场地':  { border:'border-amber-500',  gradient:'bg-gradient-to-b from-amber-900/90 to-slate-950/95',  tag:'bg-amber-900 text-amber-300',    emoji:'🏛️' },
+    };
+    const DS = { border:'border-slate-500', gradient:'bg-gradient-to-b from-slate-700/90 to-slate-950/95', tag:'bg-slate-700 text-slate-300', emoji:'🃏' };
+
+    // 以领域为主的卡面颜色（有领域→领域色，否则→类型色）
+    const cardBorder   = card => { if (!card) return DS.border;   const d = card.domain?.[0]; return (d&&DOMAIN_STYLES[d]?.border)   || (TYPE_STYLES[card.type]||DS).border;   };
+    const cardGradient = card => { if (!card) return DS.gradient; const d = card.domain?.[0]; return (d&&DOMAIN_STYLES[d]?.gradient) || (TYPE_STYLES[card.type]||DS).gradient; };
+
+    // 符文格纯色（无文字，仅颜色）
+    const RUNE_COLORS = {
+      '烈焰': 'bg-red-600 border-red-400',
+      '静谧': 'bg-emerald-600 border-emerald-400',
+      '心智': 'bg-sky-600 border-sky-400',
+      '形体': 'bg-orange-500 border-orange-400',
+      '混沌': 'bg-purple-600 border-purple-400',
+      '秩序': 'bg-yellow-500 border-yellow-400',
+    };
+    const runeColor = rune => { const d = rune?.domain?.[0]; return (d && RUNE_COLORS[d]) || 'bg-cyan-600 border-cyan-400'; };
+
+    // 旧 API（传类型字符串）保持兼容
+    const getCardBorderClass   = t => (TYPE_STYLES[t]||DS).border;
+    const getCardGradientClass = t => (TYPE_STYLES[t]||DS).gradient;
+    const getCardTypeTagClass  = t => (TYPE_STYLES[t]||DS).tag;
+    const getCardTypeEmoji     = t => (TYPE_STYLES[t]||DS).emoji;
+
+    const getZoneName = id => ({deck:'主牌库',discard:'废牌堆',sideboard:'备牌区',runeDeck:'符文堆',legend:'传奇格',champion:'英雄格'}[id]||id);
+    const currentZoneArray = computed(() => {
+      if (viewingZone.value==='deck')      return mainDeck;
+      if (viewingZone.value==='discard')   return playerDiscard;
+      if (viewingZone.value==='sideboard') return playerSideboard;
+      if (viewingZone.value==='runeDeck')  return runeDeck;
+      if (viewingZone.value==='legend')    return playerStaticCards.legend   ? [playerStaticCards.legend]   : [];
+      if (viewingZone.value==='champion')  return playerStaticCards.champion ? [playerStaticCards.champion] : [];
+      return [];
+    });
+
+    // ══ 通知 ════════════════════════════════════════════════════
+    const showSyncNotice = msg => {
+      syncNotice.value = msg;
+      setTimeout(() => { syncNotice.value = ''; }, 3500);
+    };
+
+    // ══ 登录 → 大厅 ════════════════════════════════════════════
+    const enterLobby = async () => {
+      if (!myNickname.value.trim()) return;
+      loginError.value = '';
+      try {
+        const SDK = window.Colyseus || window.colyseus;
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        colyseusClient.value = new SDK.Client(`${wsProto}//${location.host}`);
+        await fetchRoomList();
+        screen.value = 'lobby';
+        lobbyRefreshTimer = setInterval(fetchRoomList, 5000);
+      } catch(e) {
+        loginError.value = '无法连接到服务器：' + e.message;
+      }
+    };
+
+    const fetchRoomList = async () => {
+      lobbyLoading.value = true;
+      lobbyError.value = '';
+      try {
+        const res = await fetch('/api/rooms');
+        roomList.value = await res.json();
+      } catch(e) {
+        lobbyError.value = '获取房间列表失败：' + e.message;
+      } finally {
+        lobbyLoading.value = false;
+      }
+    };
+
+    // ══ 大厅提示气泡 ════════════════════════════════════════════
+    const showLobbyNotice = (msg) => {
+      lobbyNotice.value = msg;
+      if (lobbyNoticeTimer) clearTimeout(lobbyNoticeTimer);
+      lobbyNoticeTimer = setTimeout(() => { lobbyNotice.value = ''; }, 2000);
+    };
+
+    // ══ 复制房间 ID ═════════════════════════════════════════════
+    const copyRoomId = async (id) => {
+      try {
+        await navigator.clipboard.writeText(id);
+        showLobbyNotice('✅ 已复制房间 ID');
+      } catch {
+        showLobbyNotice('⚠️ 复制失败，请手动选中 ID');
+      }
+    };
+
+    // ══ 打开创建房间弹窗 ════════════════════════════════════════
+    const openCreateRoomModal = () => {
+      createRoomModal.visible = true;
+      createRoomModal.name = '';
+      createRoomModal.passwordEnabled = false;
+      createRoomModal.password = '';
+      lobbyError.value = '';
+    };
+
+    // ══ 确认创建房间 ════════════════════════════════════════════
+    const doCreateRoom = async () => {
+      createRoomModal.visible = false;
+      const opts = {};
+      if (createRoomModal.name.trim()) opts.name = createRoomModal.name.trim();
+      if (createRoomModal.passwordEnabled && createRoomModal.password.trim()) {
+        opts.password = createRoomModal.password.trim();
+      }
+      await connectAndEnterGame(null, opts);
+    };
+
+    // ══ 打开加入弹窗（有密码则先弹密码框）═════════════════════
+    const openJoinModal = async (roomId, passwordProtected) => {
+      lobbyError.value = '';
+      if (passwordProtected) {
+        joinPasswordModal.roomId = roomId;
+        joinPasswordModal.password = '';
+        joinPasswordModal.loading = false;
+        joinPasswordModal.visible = true;
+      } else {
+        await connectAndEnterGame(roomId, {});
+      }
+    };
+
+    // ══ 带密码加入 ══════════════════════════════════════════════
+    const doJoinWithPassword = async () => {
+      if (!joinPasswordModal.password.trim()) return;
+      joinPasswordModal.loading = true;
+      const ok = await connectAndEnterGame(joinPasswordModal.roomId, { password: joinPasswordModal.password });
+      joinPasswordModal.loading = false;
+      if (ok) joinPasswordModal.visible = false;
+    };
+
+    // ══ 直接输入 ID 加入 ════════════════════════════════════════
+    const joinRoomById = async () => {
+      const id = directJoinId.value.trim();
+      if (!id) return;
+      const ok = await connectAndEnterGame(id, {});
+      // 如果失败且是密码问题，自动弹出密码框
+      if (!ok && lobbyError.value.includes('密码')) {
+        lobbyError.value = '';
+        joinPasswordModal.roomId = id;
+        joinPasswordModal.password = '';
+        joinPasswordModal.loading = false;
+        joinPasswordModal.visible = true;
+      }
+    };
+
+    // ══ 核心：连接到房间，进入游戏屏幕 ═════════════════════════
+    const connectAndEnterGame = async (roomId, options = {}) => {
+      lobbyError.value = '';
+      try {
+        let colRoom;
+        if (roomId) {
+          colRoom = await colyseusClient.value.joinById(roomId, options);
+        } else {
+          colRoom = await colyseusClient.value.create('rift_battle', options);
+        }
+        room.value = colRoom;          // shallowRef，防止 Vue Proxy 破坏 Colyseus 内部
+        mySessionId.value = colRoom.sessionId;
+        myRoomId.value = colRoom.roomId;
+        setupRoomHandlers();
+        if (lobbyRefreshTimer) { clearInterval(lobbyRefreshTimer); lobbyRefreshTimer = null; }
+        showRoleOverlay.value = true;  // 进入游戏后先选身份
+        screen.value = 'game';
+        return true;
+      } catch(e) {
+        lobbyError.value = '进入房间失败：' + e.message;
+        return false;
+      }
+    };
+
+    // ══ 游戏内选择角色 ══════════════════════════════════════════
+    const claimRole = (role) => {
+      room.value.send('claimSeat', { nickname: myNickname.value, role });
+      showRoleOverlay.value = false;
+      if (role === 'player') showDeckLoader.value = true;
+    };
+
+    // ══ 游戏内切换角色（起立 / 坐下）══════════════════════════
+    const requestSwitchRole = () => {
+      const newRole = isSpectator.value ? 'player' : 'spectator';
+      room.value?.send('switchRole', { nickname: myNickname.value, newRole });
+    };
+
+    // ══ 退出房间，返回大厅 ══════════════════════════════════════
+    const leaveRoom = async () => {
+      try { await room.value?.leave(); } catch(e) { /* ignore */ }
+      room.value = null;
+      // 重置身份
+      myRole.value = ''; mySeatIndex.value = -1; mySessionId.value = ''; myRoomId.value = '';
+      showRoleOverlay.value = false; showDeckLoader.value = false;
+      deckInput.value = ''; syncNotice.value = '';
+      viewingZone.value = null; inspectingCard.value = null; zoneMenu.visible = false;
+      // 重置游戏牌区
+      mainDeck.splice(0); playerHand.splice(0); playerDiscard.splice(0); playerSideboard.splice(0);
+      playerBaseUnits.splice(0); playerBoardUnits[0].splice(0); playerBoardUnits[1].splice(0);
+      Object.assign(playerStaticCards, { champion: null, legend: null });
+      fieldCards[0] = null; fieldCards[1] = null;
+      runeDeck.splice(0);
+      for (let i = 0; i < playerRunes.length; i++) playerRunes[i] = null;
+      playerScore.value = 0;
+      // 重置对手状态
+      Object.assign(oppState, { score:0, deckCount:40, discard:0, sideboardCount:8, runesCount:0, handCount:0 });
+      opponentBaseUnits.splice(0); opponentBoardUnits[0].splice(0); opponentBoardUnits[1].splice(0);
+      Object.assign(oppStaticCards, { champion: null, legend: null });
+      // 重置花名册
+      seats[0] = null; seats[1] = null; spectators.splice(0); playerCount.value = 0;
+      // 返回大厅并恢复刷新
+      screen.value = 'lobby';
+      await fetchRoomList();
+      lobbyRefreshTimer = setInterval(fetchRoomList, 5000);
+    };
+
+    // ══ 房间消息监听（进入游戏后设置）══════════════════════════
+    const setupRoomHandlers = () => {
+
+      // 角色分配确认
+      room.value.onMessage('roleAssigned', msg => {
+        myRole.value = msg.role;
+        mySeatIndex.value = msg.role === 'player' ? msg.seatIndex : -1;
+        // 游戏内从观战切换为玩家，且尚未有卡组时，弹出卡组导入
+        if (msg.role === 'player' && !showRoleOverlay.value && !showDeckLoader.value && mainDeck.length === 0) {
+          showDeckLoader.value = true;
+        }
+      });
+
+      // 座位已满（自动转观战）
+      room.value.onMessage('seatFull', msg => {
+        showSyncNotice('⚠️ ' + msg.message);
+      });
+
+      // 花名册更新
+      room.value.onMessage('rosterUpdate', msg => {
+        seats[0] = msg.seats[0];
+        seats[1] = msg.seats[1];
+        spectators.length = 0;
+        spectators.push(...(msg.spectators || []));
+        playerCount.value = msg.playerCount;
+      });
+
+      // ── 卡牌移动 ───────────────────────────────────────────
+      room.value.onMessage('cardMoved', msg => {
+        const toPlayerSide = isSpectator.value
+          ? msg.senderSeat === 0          // 观战者：seat0 = 底部(player侧)
+          : false;                         // 玩家：收到的都是对手的消息
+
+        if (toPlayerSide) {
+          // 观战者接收 seat0 的移动 → 底部玩家侧
+          applyCardMove(playerBaseUnits, playerBoardUnits, playerStaticCards, msg, false);
+          if (msg.source==='hand') { /* seat0手牌减少，但我们没跟踪seat0手牌详情 */ }
+        } else {
+          // 对手的移动（玩家视角）或 seat1 移动（观战者视角）
+          applyCardMove(opponentBaseUnits, opponentBoardUnits, oppStaticCards, msg, !isSpectator.value);
+          if (msg.source==='hand') oppState.handCount = Math.max(0, oppState.handCount - 1);
+          if (msg.source==='deck') oppState.deckCount = Math.max(0, oppState.deckCount - 1);
+          if (msg.zoneId==='deck')      { oppState.deckCount++;      }
+          else if (msg.zoneId==='discard')   { oppState.discard++;        }
+          else if (msg.zoneId==='sideboard') { oppState.sideboardCount++; }
+          else if (msg.zoneId==='hand')      { oppState.handCount++;      }
+        }
+      });
+
+      // ── 横置 ───────────────────────────────────────────────
+      room.value.onMessage('cardTapped', msg => {
+        const toPlayerSide = isSpectator.value && msg.senderSeat === 0;
+        const [bUnits, boardUnits, statics] = toPlayerSide
+          ? [playerBaseUnits,  playerBoardUnits,  playerStaticCards]
+          : [opponentBaseUnits, opponentBoardUnits, oppStaticCards];
+        const tap = arr => { const u = arr.find(x => x.id===msg.cardId); if(u) u.tapped = msg.tapped; };
+        tap(bUnits); boardUnits.forEach(tap);
+        if (statics.champion?.id===msg.cardId) statics.champion.tapped = msg.tapped;
+        if (statics.legend?.id  ===msg.cardId) statics.legend.tapped   = msg.tapped;
+        if (fieldCards[0]?.id===msg.cardId) fieldCards[0].tapped = msg.tapped;
+        if (fieldCards[1]?.id===msg.cardId) fieldCards[1].tapped = msg.tapped;
+      });
+
+      // ── 通用动作 ───────────────────────────────────────────
+      room.value.onMessage('remoteAction', msg => {
+        const toPlayerSide = isSpectator.value && msg.senderSeat === 0;
+
+        if (toPlayerSide) {
+          // 观战者接收 seat0 的动作
+          if (msg.type==='MY_SCORE_CHANGED') playerScore.value = msg.newScore;
+          if (msg.type==='UPDATE_TOKEN') applyToken(playerBaseUnits, playerBoardUnits, playerStaticCards, msg);
+        } else {
+          // 对手动作（玩家）或 seat1 动作（观战者）
+          if (msg.type==='DRAW')             { oppState.handCount++; oppState.deckCount--; }
+          if (msg.type==='SPAWN_RUNE')       oppState.runesCount++;
+          if (msg.type==='RETURN_RUNE')      oppState.runesCount = Math.max(0, oppState.runesCount-1);
+          if (msg.type==='MY_SCORE_CHANGED') oppState.score = msg.newScore;
+          if (msg.type==='UPDATE_TOKEN')     applyToken(opponentBaseUnits, opponentBoardUnits, oppStaticCards, msg);
+        }
+        // 手势信号：双方都显示（包括观战者）
+        if (msg.type==='SIGNAL') {
+          const sig = SIGNALS.find(s => s.key === msg.signal);
+          if (sig) showSignalOverlay(sig, msg.senderName || '对手');
+        }
+      });
+
+      // ── 有人加入/重连：打包全量状态发出 ───────────────────
+      room.value.onMessage('requestFullSync', msg => {
+        if (isSpectator.value) return; // 观战者不发同步
+        showSyncNotice('🔄 有人加入，正在同步桌面…');
+        room.value.send('fullSyncData', { ...collectFullSyncData(), forSession: msg.forSession });
+      });
+
+      // ── 收到全量同步 ────────────────────────────────────────
+      room.value.onMessage('applyFullSync', data => {
+        // 判断数据来源：观战者按 senderSeat 路由；玩家始终为对手数据
+        const toPlayerSide = isSpectator.value && data.senderSeat === 0;
+        const [bUnits, boardUnits, statics, score_] =
+          toPlayerSide
+            ? [playerBaseUnits,   playerBoardUnits,   playerStaticCards, v => { playerScore.value = v; }]
+            : [opponentBaseUnits, opponentBoardUnits, oppStaticCards,    v => { oppState.score = v; }];
+
+        bUnits.length = 0;
+        bUnits.push(...(data.baseUnits || []));
+
+        // 玩家视角需要翻转战场区 zone，观战者不翻转
+        const flip = !isSpectator.value;
+        boardUnits[0].length = 0; boardUnits[0].push(...(data.boardUnits?.[flip ? 1 : 0] || []));
+        boardUnits[1].length = 0; boardUnits[1].push(...(data.boardUnits?.[flip ? 0 : 1] || []));
+
+        statics.champion = data.staticCards?.champion || null;
+        statics.legend   = data.staticCards?.legend   || null;
+        if (data.fieldCards?.[0]) fieldCards[0] = data.fieldCards[0];
+        if (data.fieldCards?.[1]) fieldCards[1] = data.fieldCards[1];
+        if (data.state) {
+          score_(data.state.score);
+          if (!toPlayerSide) Object.assign(oppState, data.state);
+        }
+        showSyncNotice('✅ 桌面已同步！');
+      });
+
+      // ── 断线检测 & 自动重连 ─────────────────────────────────
+      room.value.onLeave(code => {
+        // code 1000 = 主动离开（用户点"离开"按钮）
+        if (code === 1000 || screen.value !== 'game') return;
+        // 其他 code = 意外断线 → 尝试重连
+        const savedRoomId    = myRoomId.value;
+        const savedSessionId = mySessionId.value;
+        reconnecting.value = true;
+
+        const tryReconnect = async (attemptsLeft) => {
+          if (attemptsLeft <= 0) {
+            reconnecting.value = false;
+            reconnectMsg.value = '';
+            await leaveRoom();
+            return;
+          }
+          const attempt = 4 - attemptsLeft;
+          reconnectMsg.value = `连接断开，正在重连…（${attempt}/3）`;
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+          try {
+            const SDK = window.Colyseus || window.colyseus;
+            const newRoom = await colyseusClient.value.reconnect(savedRoomId, savedSessionId);
+            room.value = newRoom;
+            mySessionId.value = newRoom.sessionId;
+            setupRoomHandlers();
+            reconnecting.value = false;
+            reconnectMsg.value = '';
+            showSyncNotice('✅ 重连成功！');
+          } catch (e) {
+            await tryReconnect(attemptsLeft - 1);
+          }
+        };
+
+        tryReconnect(3);
+      });
+    };
+
+    // ══ 全量同步数据打包 ════════════════════════════════════════
+    const collectFullSyncData = () => ({
+      baseUnits:   JSON.parse(JSON.stringify(playerBaseUnits)),
+      boardUnits:  [JSON.parse(JSON.stringify(playerBoardUnits[0])), JSON.parse(JSON.stringify(playerBoardUnits[1]))],
+      staticCards: JSON.parse(JSON.stringify(playerStaticCards)),
+      fieldCards:  JSON.parse(JSON.stringify(fieldCards)),
+      state: {
+        score:         playerScore.value,
+        deckCount:     mainDeck.length,
+        discard:       playerDiscard.length,
+        sideboardCount:playerSideboard.length,
+        runesCount:    playerRunes.filter(Boolean).length,
+        handCount:     playerHand.length,
+      }
+    });
+
+    // ══ 卡牌移动辅助函数 ════════════════════════════════════════
+    const applyCardMove = (baseU, boardU, statics, msg, flipZone) => {
+      // 移除旧位置
+      const rm = arr => { const i = arr.findIndex(u => u.id===msg.cardId); if(i>-1) arr.splice(i,1); };
+      rm(baseU); boardU.forEach(rm);
+      if (statics.champion?.id===msg.cardId) statics.champion = null;
+      if (statics.legend?.id  ===msg.cardId) statics.legend   = null;
+      if (fieldCards[0]?.id===msg.cardId) fieldCards[0] = null;
+      if (fieldCards[1]?.id===msg.cardId) fieldCards[1] = null;
+
+      // 写入新位置
+      if (['deck','discard','sideboard'].includes(msg.zoneId)) return; // 已在 caller 处理计数
+      if (msg.zoneId?.toString().startsWith('field-')) { fieldCards[msg.zoneId.split('-')[1]] = {...msg}; return; }
+      if (msg.zoneId==='champion') { statics.champion = {...msg}; return; }
+      if (msg.zoneId==='legend')   { statics.legend   = {...msg}; return; }
+      if (msg.zoneId==='base')     { baseU.push({...msg}); return; }
+      const zone = flipZone ? (msg.zoneId==0 ? 1 : 0) : Number(msg.zoneId);
+      if (boardU[zone] !== undefined) boardU[zone].push({...msg});
+    };
+
+    const applyToken = (baseU, boardU, statics, msg) => {
+      const upd = arr => { const u = arr.find(x => x.id===msg.cardId); if(u) u.tokens = msg.tokens; };
+      upd(baseU); boardU.forEach(upd);
+      if (statics.champion?.id===msg.cardId) statics.champion.tokens = msg.tokens;
+      if (statics.legend?.id  ===msg.cardId) statics.legend.tokens   = msg.tokens;
+      if (fieldCards[0]?.id===msg.cardId) fieldCards[0].tokens = msg.tokens;
+      if (fieldCards[1]?.id===msg.cardId) fieldCards[1].tokens = msg.tokens;
+    };
+
+    // ══ 生命周期 ════════════════════════════════════════════════
+    onMounted(async () => {
+      window.addEventListener('click', () => { zoneMenu.visible = false; });
+      window.addEventListener('touchstart', e => { if(!e.target.closest('.fixed.z-\\[300\\]')) zoneMenu.visible = false; });
+      // 注册 Service Worker（PWA 离线支持）
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      }
+      // 加载卡牌数据库
+      try {
+        const res = await fetch('/cards.json');
+        const cards = await res.json();
+        cards.forEach(c => {
+          cardDb[c.name] = c;
+          if (c.enName) cardDb[c.enName] = c;
+        });
+        dbAllCards.value = cards; // 供组牌工具使用
+        console.log('✅ 卡牌数据库加载完成，共', cards.length, '张');
+      } catch(e) { console.warn('⚠️ 卡牌数据库加载失败', e); }
+    });
+
+    // ══ 卡组导入 ════════════════════════════════════════════════
+    const mkId = () => Math.random().toString(36).substr(2, 9);
+
+    // 用数据库补全卡牌属性（energy/runic/might/domain/type）
+    const enrichCard = c => {
+      const db = cardDb[c.name] || (c.enName && cardDb[c.enName]) || null;
+      return {
+        ...c,
+        energy: c.energy  ?? db?.energy  ?? c.cost   ?? null,  // 费用
+        runic:  c.runic   ?? db?.runic   ?? null,               // 符能
+        might:  c.might   ?? db?.might   ?? c.power  ?? null,  // 战力
+        domain: c.domain  ?? db?.domain  ?? [],
+        type:   c.type    || db?.type    || '未知',
+        // 保留旧字段向下兼容（同步时对端也能读）
+        cost:   c.energy  ?? db?.energy  ?? c.cost   ?? null,
+        power:  c.might   ?? db?.might   ?? c.power  ?? null,
+      };
+    };
+
+    const loadDefaultDeck = () => {
+      deckInput.value = JSON.stringify({
+        legend:    { name:'黑暗之女·入门', type:'传奇' },
+        champion:  { name:'安妮·汹涌烈焰', type:'英雄单位' },
+        main: [
+          ...Array(3).fill({ name:'炽烈符文', type:'符文' }),
+          ...Array(4).fill({ name:'焚烧',       type:'法术' }),     // Incinerate e=2
+          ...Array(4).fill({ name:'碎裂之火',   type:'法术' }),     // Disintegrate e=4
+          ...Array(4).fill({ name:'矢志不退',   type:'法术' }),     // Against the Odds e=2
+          ...Array(4).fill({ name:'灼焰飞龙',   type:'单位' }),     // Blazing Scorcher e=5 m=5
+          ...Array(4).fill({ name:'粗鲁的海盗', type:'单位' }),     // Brazen Buccaneer e=6 m=5
+          ...Array(4).fill({ name:'炼金太保',   type:'单位' }),     // Chemtech Enforcer e=2 m=2
+          ...Array(4).fill({ name:'嚼火者手雷', type:'单位' }),     // Flame Chompers e=3 m=3
+          ...Array(4).fill({ name:'提伯斯',     type:'专属单位' }), // Tibbers e=8 m=7
+          ...Array(4).fill({ name:'旋转飞斧',   type:'装备' }),     // Spinning Axe e=2
+          ...Array(7).fill({ name:'烈火风暴',   type:'法术' }),     // Firestorm e=6
+        ],
+        runes: Array(12).fill({ name:'炽烈符文', type:'符文' }),
+        sideboard: Array(10).fill({ name:'闪现', type:'法术' }),
+      }, null, 2);
+    };
+
+    const importDeck = () => {
+      try {
+        const data = JSON.parse(deckInput.value);
+        mainDeck.length = 0; playerHand.length = 0; playerSideboard.length = 0; runeDeck.length = 0;
+        fieldCards[0] = null; fieldCards[1] = null;
+        if (data.main)      mainDeck.push(...data.main.map(c => ({...enrichCard(c), tokens:0, id:mkId()})));
+        if (data.sideboard) playerSideboard.push(...data.sideboard.map(c => ({...enrichCard(c), tokens:0, id:mkId()})));
+        if (data.runes)     runeDeck.push(...data.runes.map(c => ({...enrichCard(c), tokens:0, id:'rune-'+mkId()})));
+        // 战场牌直接放入战场格（最多2格），不进主牌堆
+        if (data.fields) {
+          data.fields.slice(0, 2).forEach((c, i) => {
+            fieldCards[i] = { ...enrichCard(c), tokens:0, id:'field-'+mkId(), x:50, y:50, tapped:false };
+          });
+        }
+        shuffleZone('deck'); shuffleZone('runeDeck');
+        playerStaticCards.legend   = data.legend   ? {...enrichCard(data.legend),   id:'legend-'+Date.now(),   x:50, y:50, tapped:false, tokens:0} : null;
+        playerStaticCards.champion = data.champion ? {...enrichCard(data.champion), id:'champion-'+Date.now(), x:50, y:50, tapped:false, tokens:0} : null;
+        showDeckLoader.value = false;
+      } catch(e) { alert('JSON 格式有误，请检查后重试。'); }
+    };
+
+    // ══ 指示物召唤 ══════════════════════════════════════════════
+    const tokenResults = computed(() => {
+      const q = tokenQuery.value.trim();
+      // Deduplicate by name (cardDb stores each card under both name+enName keys)
+      const seenNames = new Set();
+      const unique = Object.values(cardDb).filter(c => {
+        if (seenNames.has(c.name)) return false;
+        seenNames.add(c.name);
+        return true;
+      });
+      const pool = unique.filter(c => c.isToken || c.isBattlefield);
+      if (!q) return pool.slice(0, 20);
+      return pool.filter(c => c.name.includes(q)).slice(0, 20);
+    });
+
+    const spawnTokenCard = dbCard => {
+      if (!dbCard || isSpectator.value) return;
+      const c = { ...enrichCard({...dbCard}), id: mkId(), tokens: 0, tapped: false };
+      playerHand.push(c);
+      room.value?.send('gameAction', { type:'DRAW' });
+      showTokenFetch.value = false;
+      tokenQuery.value = '';
+    };
+
+    // Touch helpers for token popup (fixes mobile scroll-container click suppression)
+    let _tokenTouchOrigin = null;
+    const onTokenTouchStart = e => {
+      _tokenTouchOrigin = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    };
+    const onTokenTouchEnd = (e, card) => {
+      if (!_tokenTouchOrigin || !e.changedTouches?.length) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - _tokenTouchOrigin.x;
+      const dy = t.clientY - _tokenTouchOrigin.y;
+      _tokenTouchOrigin = null;
+      // Only spawn if finger didn't move (i.e., it's a tap, not a scroll)
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+        e.stopPropagation();
+        e.preventDefault();   // Prevents the 300ms-delayed synthetic @click from double-firing
+        spawnTokenCard(card);
+      }
+    };
+
+    // ══ 区域操作 ════════════════════════════════════════════════
+    const openZoneMenu = (ev, zoneId) => {
+      if (isSpectator.value) return;
+      zoneMenu.visible = true;
+      let x = ev.clientX, y = ev.clientY;
+      if (ev.touches?.length) { x = ev.touches[0].clientX; y = ev.touches[0].clientY; }
+      zoneMenu.x = Math.min(x, window.innerWidth-128);
+      zoneMenu.y = Math.min(y, window.innerHeight-110);
+      zoneMenu.zoneId = zoneId;
+    };
+    const viewZone    = id => { viewingZone.value = id; zoneMenu.visible = false; };
+    const shuffleZone = id => {
+      const m = {deck:mainDeck, discard:playerDiscard, sideboard:playerSideboard, runeDeck:runeDeck};
+      const arr = m[id]; if (arr?.length>1) arr.sort(()=>Math.random()-0.5);
+      zoneMenu.visible = false;
+    };
+
+    // ══ 单卡特写 & 指示物 ════════════════════════════════════════
+    // 格式化效果文字：{{关键词}} → 高亮，\n → <br>
+    const renderEffect = text => {
+      if (!text) return '';
+      return text
+        .replace(/\{\{([^}]+)\}\}/g, '<span class="bg-amber-900/60 text-amber-200 font-bold px-0.5 rounded">$1</span>')
+        .replace(/\n/g, '<br>');
+    };
+
+    const inspectCard = (card, zone) => {
+      if (!card) return;
+      if (card.tokens===undefined) card.tokens = 0;
+      // 从卡牌数据库补全效果/风味文字
+      const dbCard = cardDb[card.name];
+      const full = dbCard
+        ? { ...card, effect: dbCard.effect || card.effect || '', flavor: dbCard.flavor || '', rarity: dbCard.rarity || '' }
+        : card;
+      inspectingCard.value = { card: full, zone };
+    };
+    const modifyToken = amount => {
+      if (!inspectingCard.value?.card || isSpectator.value) return;
+      inspectingCard.value.card.tokens += amount;
+      room.value?.send('gameAction', { type:'UPDATE_TOKEN', cardId:inspectingCard.value.card.id, tokens:inspectingCard.value.card.tokens });
+    };
+    const deleteInspectedCard = () => {
+      if (!inspectingCard.value?.card || isSpectator.value) return;
+      const id = inspectingCard.value.card.id;
+      const rm = arr => { const i = arr.findIndex(c => c?.id === id); if (i !== -1) arr.splice(i, 1); };
+      rm(playerHand); rm(playerDiscard); rm(playerSideboard);
+      rm(playerBaseUnits);
+      playerBoardUnits.forEach(lane => rm(lane));
+      if (fieldCards[0]?.id === id) fieldCards[0] = null;
+      if (fieldCards[1]?.id === id) fieldCards[1] = null;
+      if (playerStaticCards.legend?.id === id) playerStaticCards.legend = null;
+      if (playerStaticCards.champion?.id === id) playerStaticCards.champion = null;
+      inspectingCard.value = null;
+    };
+
+    // ══ 抽牌 & 符文 ══════════════════════════════════════════════
+    const drawCard = init => {
+      if (mainDeck.length>0) {
+        playerHand.push(mainDeck.pop());
+        if (!init) room.value?.send('gameAction', { type:'DRAW' });
+      }
+    };
+    const spawnRune = () => {
+      if (runeDeck.length>0) {
+        const ei = playerRunes.findIndex(r=>!r);
+        if (ei>-1) { const r = runeDeck.shift(); r.tapped=false; playerRunes[ei]=r; room.value?.send('gameAction',{type:'SPAWN_RUNE'}); }
+      }
+    };
+    const returnRune = (idx, pos) => {
+      const r = playerRunes[idx]; if(!r) return;
+      playerRunes[idx] = null;
+      if (pos==='top') runeDeck.unshift(r); else runeDeck.push(r);
+      room.value?.send('gameAction',{type:'RETURN_RUNE'});
+    };
+    const handleRuneClick = idx => {
+      if (runeClickTimer) clearTimeout(runeClickTimer);
+      runeClickTimer = setTimeout(()=>{ returnRune(idx,'bottom'); runeClickTimer=null; }, 280);
+    };
+    const handleRuneDblClick = idx => {
+      if (runeClickTimer) { clearTimeout(runeClickTimer); runeClickTimer=null; }
+      const r = playerRunes[idx];
+      if (r) { r.tapped=!r.tapped; room.value?.send('tapCard',{cardId:r.id,tapped:r.tapped}); }
+    };
+
+    // ══ 分数 ══════════════════════════════════════════════════════
+    const changeScore = (target, amount) => {
+      if (isSpectator.value) return;
+      if (target==='player') {
+        playerScore.value = Math.max(0, Math.min(99, playerScore.value+amount));
+        room.value?.send('gameAction',{type:'MY_SCORE_CHANGED', newScore:playerScore.value});
+      } else {
+        oppState.score = Math.max(0, Math.min(99, oppState.score+amount));
+      }
+    };
+
+    // ══ 拖拽系统 ══════════════════════════════════════════════════
+    const onDragStart = (ev, card, source, indexOrZone) => {
+      if (isSpectator.value) return;
+      draggedCard.value = { card, source, indexOrZone };
+      ev.dataTransfer.effectAllowed = 'move';
+      // 横置残影修复
+      if (card?.tapped) {
+        const el = ev.currentTarget, size = Math.max(el.offsetWidth, el.offsetHeight)+20;
+        const wrap = document.createElement('div');
+        wrap.style.cssText = `position:absolute;top:-9999px;left:-9999px;pointer-events:none;width:${size}px;height:${size}px;`;
+        const ghost = el.cloneNode(true);
+        ghost.style.cssText = `position:absolute;top:50%;left:50%;margin:0;transform:translate(-50%,-50%) rotate(90deg);`;
+        wrap.appendChild(ghost); document.body.appendChild(wrap);
+        ev.dataTransfer.setDragImage(wrap, size/2, size/2);
+        setTimeout(()=>wrap.parentNode?.removeChild(wrap), 100);
+      }
+    };
+    const onDragStartFromViewer = (ev, card, source, indexOrZone) => {
+      onDragStart(ev, card, source, indexOrZone);
+      setTimeout(()=>{ isViewerHiddenForDrag.value=true; }, 10);
+    };
+    const onDragEndFromViewer = () => { isViewerHiddenForDrag.value=false; draggedCard.value=null; };
+
+    const rmFromSource = (source, indexOrZone, cardId) => {
+      if (source==='hand')      playerHand.splice(indexOrZone,1);
+      else if (source==='board') {
+        const arr = indexOrZone==='base' ? playerBaseUnits : playerBoardUnits[indexOrZone];
+        const i = arr.findIndex(u=>u.id===cardId); if(i>-1) arr.splice(i,1);
+      }
+      else if (source==='static'||source==='legend'||source==='champion') playerStaticCards[indexOrZone]=null;
+      else if (source==='field')    fieldCards[indexOrZone]=null;
+      else if (source==='rune')     playerRunes[indexOrZone]=null;
+      else if (source==='deck')     mainDeck.splice(indexOrZone,1);
+      else if (source==='discard')  playerDiscard.splice(indexOrZone,1);
+      else if (source==='sideboard')playerSideboard.splice(indexOrZone,1);
+      else if (source==='runeDeck') runeDeck.splice(indexOrZone,1);
+    };
+
+    const onDrop = (ev, zoneId) => {
+      if (!draggedCard.value || draggedCard.value.source==='rune') return;
+      const {card, source, indexOrZone} = draggedCard.value;
+      const rect = ev.currentTarget.getBoundingClientRect();
+      const x = Math.round(((ev.clientX-rect.left)/rect.width)*100);
+      const y = Math.round(((ev.clientY-rect.top )/rect.height)*100);
+      const unit = {...card, x, y};
+      if (source!=='board') unit.tapped=false;
+      rmFromSource(source, indexOrZone, card.id);
+      if (zoneId==='champion'||zoneId==='legend') playerStaticCards[zoneId]=unit;
+      else if (zoneId?.toString().startsWith('field-')) fieldCards[zoneId.split('-')[1]]=unit;
+      else if (zoneId==='base') playerBaseUnits.push(unit);
+      else playerBoardUnits[zoneId].push(unit);
+      room.value?.send('moveCard', {zoneId, cardId:unit.id, source, x, y, ...unit});
+      draggedCard.value=null;
+    };
+    const onDropToDeck = ev => {
+      if (!draggedCard.value||draggedCard.value.source==='rune') return;
+      const {card,source,indexOrZone}=draggedCard.value;
+      mainDeck.push(card); rmFromSource(source,indexOrZone,card.id);
+      room.value?.send('moveCard',{zoneId:'deck',cardId:card.id,source}); draggedCard.value=null;
+    };
+    const onDropToDiscard = ev => {
+      if (!draggedCard.value||draggedCard.value.source==='rune') return;
+      const {card,source,indexOrZone}=draggedCard.value;
+      playerDiscard.push(card); rmFromSource(source,indexOrZone,card.id);
+      room.value?.send('moveCard',{zoneId:'discard',cardId:card.id,source}); draggedCard.value=null;
+    };
+    const onDropToSideboard = ev => {
+      if (!draggedCard.value||draggedCard.value.source==='rune') return;
+      const {card,source,indexOrZone}=draggedCard.value;
+      playerSideboard.push(card); rmFromSource(source,indexOrZone,card.id);
+      room.value?.send('moveCard',{zoneId:'sideboard',cardId:card.id,source}); draggedCard.value=null;
+    };
+    const onDropToRuneDeck = ev => {
+      if (!draggedCard.value) return;
+      const {source,indexOrZone}=draggedCard.value;
+      if (source==='rune') { returnRune(indexOrZone,'top'); draggedCard.value=null; }
+    };
+    // 回手（触摸专用 + 鼠标拖拽回手区）
+    const onDropToHand = () => {
+      if (!draggedCard.value) return;
+      const {card, source, indexOrZone} = draggedCard.value;
+      if (source === 'hand') { draggedCard.value = null; return; }
+      playerHand.push(card);
+      rmFromSource(source, indexOrZone, card.id);
+      room.value?.send('moveCard', { zoneId: 'hand', cardId: card.id, source });
+      draggedCard.value = null;
+    };
+
+    // ══ 触摸拖拽系统（移动端）════════════════════════════════════
+    let _touchDrag = null;
+
+    const _makeTouchGhost = (card, x, y) => {
+      const ghost = document.createElement('div');
+      ghost.id = '__touch-ghost__';
+      const typeColors = {
+        '单位': { bg:'#1e3a5f', border:'#3b82f6' },
+        '符咒': { bg:'#2d1b4e', border:'#a855f7' },
+        '传奇': { bg:'#4a1e1e', border:'#ef4444' },
+        '英雄': { bg:'#1e2d4a', border:'#60a5fa' },
+      };
+      const col = typeColors[card.type] || { bg:'#1e293b', border:'#64748b' };
+      ghost.style.cssText = [
+        'position:fixed', `z-index:9999`,
+        'width:64px', 'height:96px', 'border-radius:12px',
+        'opacity:0.88', 'pointer-events:none',
+        `background:${col.bg}`, `border:2px solid ${col.border}`,
+        'display:flex','flex-direction:column',
+        'align-items:center','justify-content:center',
+        'padding:4px','color:white','font-size:9px',
+        'font-weight:bold','text-align:center',
+        'box-shadow:0 8px 32px rgba(0,0,0,0.7)','overflow:hidden',
+        'transform:translate(-50%,-65%) scale(1.1)','transition:none',
+        `left:${x}px`, `top:${y}px`,
+      ].join(';');
+      const img = card.image
+        ? `<div style="position:absolute;inset:0;background:url('${card.image}') center/cover;border-radius:inherit;opacity:0.9"></div>`
+        : '';
+      ghost.innerHTML = `${img}<span style="position:relative;z-index:1;text-shadow:0 1px 4px #000;padding:2px;line-height:1.2">${card.name||'?'}</span>`;
+      document.body.appendChild(ghost);
+      return ghost;
+    };
+
+    const _dispatchTouchDrop = (zone, zoneEl, x, y) => {
+      if (!draggedCard.value) return;
+      if (zone === 'hand')     { onDropToHand();     return; }
+      if (zone === 'deck')     { onDropToDeck();     return; }
+      if (zone === 'discard')  { onDropToDiscard();  return; }
+      if (zone === 'sideboard'){ onDropToSideboard();return; }
+      if (zone === 'runeDeck') { onDropToRuneDeck(); return; }
+      // 需要坐标的区域（板上、基地、战场格、静态格）
+      const fakeEv = { currentTarget: zoneEl, clientX: x, clientY: y };
+      if (zone === 'board-0') { onDrop(fakeEv, 0);        return; }
+      if (zone === 'board-1') { onDrop(fakeEv, 1);        return; }
+      if (zone === 'base')    { onDrop(fakeEv, 'base');   return; }
+      if (zone === 'field-0') { onDrop(fakeEv, 'field-0');return; }
+      if (zone === 'field-1') { onDrop(fakeEv, 'field-1');return; }
+      if (zone === 'legend')  { onDrop(fakeEv, 'legend'); return; }
+      if (zone === 'champion'){ onDrop(fakeEv, 'champion');return;}
+    };
+
+    const onCardTouchStart = (ev, card, source, indexOrZone, opts = {}) => {
+      if (isSpectator.value) return;
+      const t0 = ev.touches[0];
+      const startX = t0.clientX, startY = t0.clientY;
+      let dragging = false;
+
+      const onMove = (e) => {
+        const t = e.touches[0];
+        if (!dragging) {
+          const dx = t.clientX - startX, dy = t.clientY - startY;
+          if (Math.hypot(dx, dy) < 8) return;
+          // 超过阈值 → 正式开始拖拽
+          dragging = true;
+          draggedCard.value = { card, source, indexOrZone };
+          const ghost = _makeTouchGhost(card, t.clientX, t.clientY);
+          _touchDrag = { ghost };
+          opts.onDragBegin?.();
+        }
+        e.preventDefault();
+        if (_touchDrag?.ghost) {
+          _touchDrag.ghost.style.left = t.clientX + 'px';
+          _touchDrag.ghost.style.top  = t.clientY + 'px';
+        }
+      };
+
+      const onEnd = (e) => {
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend',  onEnd);
+        opts.onDragEnd?.();
+        if (!dragging || !_touchDrag) { _touchDrag = null; return; }
+        const ghost = _touchDrag.ghost;
+        if (ghost) ghost.style.display = 'none';
+        const t = e.changedTouches[0];
+        const dropX = t.clientX, dropY = t.clientY;
+        const hitEl = document.elementFromPoint(dropX, dropY);
+        let zoneEl = hitEl, zone = null;
+        while (zoneEl && zoneEl !== document.body) {
+          if (zoneEl.dataset?.zone) { zone = zoneEl.dataset.zone; break; }
+          zoneEl = zoneEl.parentElement;
+        }
+        if (ghost) ghost.remove();
+        if (zone && draggedCard.value) _dispatchTouchDrop(zone, zoneEl, dropX, dropY);
+        if (draggedCard.value) draggedCard.value = null;
+        _touchDrag = null;
+      };
+
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend',  onEnd,  { passive: false });
+    };
+
+    // 区域查看器触摸拖拽（拖动后隐藏查看器，释放后恢复）
+    const onCardTouchStartFromViewer = (ev, card, source, indexOrZone) => {
+      onCardTouchStart(ev, card, source, indexOrZone, {
+        onDragBegin: () => { isViewerHiddenForDrag.value = true; },
+        onDragEnd:   () => { isViewerHiddenForDrag.value = false; },
+      });
+    };
+
+    const toggleTap = (unit, zoneId) => {
+      if (isSpectator.value) return;
+      unit.tapped=!unit.tapped;
+      room.value?.send('tapCard',{cardId:unit.id,tapped:unit.tapped});
+    };
+
+    // ══ 组牌工具 ════════════════════════════════════════════════
+    const dbTab          = ref('browse');   // 'browse' | 'deck'
+    const dbSearch       = ref('');
+    const dbTypeFilter   = ref('all');
+    const dbDomainFilter = ref('all');
+    const dbDeck = reactive({ legend: null, champion: null, main: {}, runes: {}, sideboard: {}, fields: {} });
+    const dbCodeModal = reactive({ visible: false, mode: 'export', code: '', copied: false });
+    const dbSavedJson = ref('');  // 保存给游戏内加载用
+
+    const DB_TYPE_OPTS = [
+      { v:'all', l:'全部' }, { v:'法术', l:'法术' }, { v:'单位', l:'单位' },
+      { v:'装备', l:'装备' }, { v:'传奇', l:'传奇' }, { v:'英雄单位', l:'英雄' },
+      { v:'符文', l:'符文' }, { v:'战场', l:'战场' },
+    ];
+    // 领域筛选：v=领域名，c=Tailwind色类（颜色圆点）
+    const DB_DOMAIN_OPTS = [
+      { v:'烈焰', c:'bg-red-500' }, { v:'静谧', c:'bg-emerald-500' },
+      { v:'心智', c:'bg-sky-500' }, { v:'形体', c:'bg-orange-400' },
+      { v:'混沌', c:'bg-purple-500' }, { v:'秩序', c:'bg-yellow-400' },
+    ];
+
+    const dbFilteredCards = computed(() => {
+      let list = dbAllCards.value.filter(c => !c.isToken);
+      const q = dbSearch.value.trim().toLowerCase();
+      if (q) list = list.filter(c => c.name.includes(q) || (c.enName||'').toLowerCase().includes(q));
+      const tf = dbTypeFilter.value;
+      if (tf !== 'all') {
+        if (tf === '单位')     list = list.filter(c => c.type.includes('单位') && !c.type.includes('英雄'));
+        else if (tf === '法术') list = list.filter(c => c.type.includes('法术') && !c.type.includes('专属'));
+        else if (tf === '装备') list = list.filter(c => c.type.includes('装备'));
+        else if (tf === '战场') list = list.filter(c => c.isBattlefield || c.type === '战场');
+        else list = list.filter(c => c.type === tf);
+      }
+      const df = dbDomainFilter.value;
+      if (df !== 'all') list = list.filter(c => c.domain?.includes(df));
+      return list.slice(0, 120);
+    });
+
+    const dbMainCount  = computed(() => Object.values(dbDeck.main).reduce((a,b)=>a+b, 0));
+    const dbRuneCount  = computed(() => Object.values(dbDeck.runes).reduce((a,b)=>a+b, 0));
+    const dbSideCount  = computed(() => Object.values(dbDeck.sideboard).reduce((a,b)=>a+b, 0));
+    const dbFieldCount = computed(() => Object.values(dbDeck.fields).reduce((a,b)=>a+b, 0));
+
+    const dbDomainColor = card => {
+      const c = {'烈焰':'bg-red-600','静谧':'bg-emerald-600','心智':'bg-sky-600','形体':'bg-orange-500','混沌':'bg-purple-600','秩序':'bg-yellow-500'};
+      return c[card.domain?.[0]] || 'bg-slate-600';
+    };
+
+    const dbGetCount = card => {
+      if (card.type === '传奇') return dbDeck.legend?.name === card.name ? 1 : 0;
+      if (card.type === '英雄单位' || card.type === '专属单位') return dbDeck.champion?.name === card.name ? 1 : 0;
+      if (card.isRune || card.type === '符文') return dbDeck.runes[card.name] || 0;
+      if (card.isBattlefield || card.type === '战场') return dbDeck.fields[card.name] || 0;
+      return dbDeck.main[card.name] || 0;
+    };
+
+    const dbAdd = card => {
+      if (card.type === '传奇')     { dbDeck.legend = card; return; }
+      if (card.type === '英雄单位' || card.type === '专属单位') { dbDeck.champion = card; return; }
+      if (card.isRune || card.type === '符文') {
+        if (dbRuneCount.value >= 12) return;
+        dbDeck.runes[card.name] = (dbDeck.runes[card.name] || 0) + 1; return;
+      }
+      if (card.isBattlefield || card.type === '战场') {
+        if (dbFieldCount.value >= 3) return;
+        dbDeck.fields[card.name] = (dbDeck.fields[card.name] || 0) + 1; return;
+      }
+      const cur = dbDeck.main[card.name] || 0;
+      if (cur >= 4) return;
+      dbDeck.main[card.name] = cur + 1;
+    };
+
+    const dbRemove = card => {
+      if (card.type === '传奇')     { dbDeck.legend = null; return; }
+      if (card.type === '英雄单位' || card.type === '专属单位') { dbDeck.champion = null; return; }
+      if (card.isBattlefield || card.type === '战场') {
+        const cur = dbDeck.fields[card.name] || 0;
+        if (cur <= 1) delete dbDeck.fields[card.name]; else dbDeck.fields[card.name] = cur - 1; return;
+      }
+      const zone = (card.isRune || card.type === '符文') ? 'runes' : 'main';
+      const cur = dbDeck[zone][card.name] || 0;
+      if (cur <= 0) return;
+      if (cur === 1) delete dbDeck[zone][card.name]; else dbDeck[zone][card.name] = cur - 1;
+    };
+
+    // 加入备牌（非符文/传奇/英雄/战场，最多4×，备牌总数≤10）
+    const dbAddToSide = card => {
+      if (['传奇','英雄单位','专属单位','符文','战场'].includes(card.type)) return;
+      if (card.isRune || card.isBattlefield) return;
+      const cur = dbDeck.sideboard[card.name] || 0;
+      if (cur >= 4 || dbSideCount.value >= 10) return;
+      dbDeck.sideboard[card.name] = cur + 1;
+    };
+
+    const dbAdjust = (name, zone, delta) => {
+      const cur = dbDeck[zone][name] || 0;
+      const next = cur + delta;
+      if (next <= 0) { delete dbDeck[zone][name]; }
+      else if (zone === 'main' && next > 4) return;
+      else if (zone === 'fields' && dbFieldCount.value >= 3 && delta > 0) return;
+      else if (zone === 'runes' && dbRuneCount.value >= 12 && delta > 0) return;
+      else if (zone === 'sideboard' && dbSideCount.value >= 10 && delta > 0) return;
+      else dbDeck[zone][name] = next;
+    };
+
+    // 根据牌的领域返回文字颜色 class（与卡牌库侧边条颜色一致）
+    const dbTextColor = name => {
+      const card = cardDb[name];
+      const d = card?.domain?.[0];
+      const domainMap = {
+        '烈焰': 'text-red-400',
+        '静谧': 'text-emerald-400',
+        '心智': 'text-sky-400',
+        '形体': 'text-orange-400',
+        '混沌': 'text-purple-400',
+        '秩序': 'text-yellow-400',
+      };
+      if (d && domainMap[d]) return domainMap[d];
+      const type = card?.type;
+      if (type === '符文') return 'text-cyan-300';
+      if (type === '传奇') return 'text-amber-300';
+      if (type === '英雄单位' || type === '专属单位') return 'text-blue-400';
+      if (type === '战场') return 'text-amber-300';
+      return 'text-white';
+    };
+
+    // 生成 Base64 牌组代码（含战场）
+    const dbGenCode = () => {
+      const all = dbAllCards.value.filter(c => !c.isToken);
+      const idx = name => all.findIndex(c => c.name === name);
+      const payload = {
+        l: dbDeck.legend   ? idx(dbDeck.legend.name)   : -1,
+        c: dbDeck.champion ? idx(dbDeck.champion.name) : -1,
+        m: Object.entries(dbDeck.main).map(([n,cnt])=>[idx(n),cnt]).filter(([i])=>i>=0),
+        r: Object.entries(dbDeck.runes).map(([n,cnt])=>[idx(n),cnt]).filter(([i])=>i>=0),
+        s: Object.entries(dbDeck.sideboard).map(([n,cnt])=>[idx(n),cnt]).filter(([i])=>i>=0),
+        f: Object.entries(dbDeck.fields).map(([n,cnt])=>[idx(n),cnt]).filter(([i])=>i>=0),
+      };
+      dbCodeModal.code    = btoa(JSON.stringify(payload));
+      dbCodeModal.mode    = 'export';
+      dbCodeModal.copied  = false;
+      dbCodeModal.visible = true;
+    };
+
+    const dbImportCode = () => { dbCodeModal.code = ''; dbCodeModal.mode = 'import'; dbCodeModal.visible = true; };
+
+    const dbDoImport = () => {
+      try {
+        const all = dbAllCards.value.filter(c => !c.isToken);
+        const p = JSON.parse(atob(dbCodeModal.code.trim()));
+        if (p.l >= 0 && all[p.l]) dbDeck.legend   = all[p.l];
+        if (p.c >= 0 && all[p.c]) dbDeck.champion = all[p.c];
+        Object.keys(dbDeck.main).forEach(k => delete dbDeck.main[k]);
+        (p.m||[]).forEach(([i,cnt]) => { if(all[i]) dbDeck.main[all[i].name] = cnt; });
+        Object.keys(dbDeck.runes).forEach(k => delete dbDeck.runes[k]);
+        (p.r||[]).forEach(([i,cnt]) => { if(all[i]) dbDeck.runes[all[i].name] = cnt; });
+        Object.keys(dbDeck.sideboard).forEach(k => delete dbDeck.sideboard[k]);
+        (p.s||[]).forEach(([i,cnt]) => { if(all[i]) dbDeck.sideboard[all[i].name] = cnt; });
+        Object.keys(dbDeck.fields).forEach(k => delete dbDeck.fields[k]);
+        (p.f||[]).forEach(([i,cnt]) => { if(all[i]) dbDeck.fields[all[i].name] = cnt; });
+        dbCodeModal.visible = false; dbTab.value = 'deck';
+      } catch(e) { alert('代码无效，请检查后重试'); }
+    };
+
+    const dbCopyCode = () => {
+      navigator.clipboard.writeText(dbCodeModal.code).then(() => {
+        dbCodeModal.copied = true; setTimeout(() => dbCodeModal.copied = false, 2000);
+      });
+    };
+
+    // 将当前牌组保存为 JSON，供游戏内直接加载
+    const dbUseDeck = () => {
+      const resolveType = name => (Object.values(cardDb).find(x => x.name === name))?.type || '未知';
+      const data = {
+        legend:    dbDeck.legend   ? { name: dbDeck.legend.name,   type: dbDeck.legend.type }   : undefined,
+        champion:  dbDeck.champion ? { name: dbDeck.champion.name, type: dbDeck.champion.type } : undefined,
+        main:      Object.entries(dbDeck.main).flatMap(([name,cnt]) =>
+                     Array(cnt).fill({ name, type: resolveType(name) })),
+        runes:     Object.entries(dbDeck.runes).flatMap(([name,cnt]) =>
+                     Array(cnt).fill({ name, type:'符文' })),
+        sideboard: Object.entries(dbDeck.sideboard).flatMap(([name,cnt]) =>
+                     Array(cnt).fill({ name, type: resolveType(name) })),
+        fields:    Object.entries(dbDeck.fields).flatMap(([name,cnt]) =>
+                     Array(cnt).fill({ name, type:'战场' })),
+      };
+      dbSavedJson.value = JSON.stringify(data, null, 2);
+      screen.value = 'lobby';
+    };
+
+    const dbLoadSaved = () => {
+      if (dbSavedJson.value) { deckInput.value = dbSavedJson.value; importDeck(); }
+    };
+
+    // ══ 返回模板绑定 ════════════════════════════════════════════
+    return {
+      // 屏幕
+      screen, myNickname, loginError, myRole, mySessionId, isSpectator,
+      // 大厅
+      roomList, lobbyLoading, lobbyError, lobbyNotice, directJoinId,
+      createRoomModal, joinPasswordModal, showRoleOverlay,
+      enterLobby, fetchRoomList,
+      openCreateRoomModal, doCreateRoom, openJoinModal, doJoinWithPassword,
+      joinRoomById, copyRoomId, claimRole, requestSwitchRole, leaveRoom, myRoomId,
+      // 游戏 UI
+      showDeckLoader, deckInput, syncNotice, playerCount, seats, spectators,
+      viewingZone, inspectingCard, currentZoneArray, zoneMenu, isViewerHiddenForDrag,
+      // 样式
+      getCardBorderClass, getCardGradientClass, getCardTypeTagClass, getCardTypeEmoji, getZoneName,
+      cardBorder, cardGradient, runeColor,
+      // 指示物召唤
+      showTokenFetch, tokenQuery, tokenResults, spawnTokenCard, onTokenTouchStart, onTokenTouchEnd,
+      // 玩家牌区
+      playerHand, playerDiscard, playerSideboard, playerBaseUnits, playerBoardUnits,
+      playerStaticCards, fieldCards, playerRunes, playerRuneDeckCount, playerScore, mainDeck, runeDeck,
+      // 对手
+      oppState, opponentBaseUnits, opponentBoardUnits, oppStaticCards,
+      // 操作
+      loadDefaultDeck, importDeck,
+      viewZone, shuffleZone, openZoneMenu, inspectCard, modifyToken, deleteInspectedCard, renderEffect,
+      drawCard, spawnRune, handleRuneClick, handleRuneDblClick, toggleTap, changeScore,
+      onDragStart, onDragStartFromViewer, onDragEndFromViewer,
+      onDrop, onDropToDeck, onDropToDiscard, onDropToSideboard, onDropToRuneDeck, onDropToHand,
+      onCardTouchStart, onCardTouchStartFromViewer,
+      reconnecting, reconnectMsg,
+      // 手势信号
+      SIGNALS, signalCooldowns, signalOverlay, sendSignal,
+      // 组牌工具
+      dbAllCards,
+      dbTab, dbSearch, dbTypeFilter, dbDomainFilter, dbDeck,
+      DB_TYPE_OPTS, DB_DOMAIN_OPTS,
+      dbFilteredCards, dbMainCount, dbRuneCount, dbSideCount, dbFieldCount,
+      dbDomainColor, dbGetCount, dbAdd, dbRemove, dbAdjust, dbAddToSide, dbTextColor,
+      dbCodeModal, dbGenCode, dbImportCode, dbDoImport, dbCopyCode,
+      dbSavedJson, dbUseDeck, dbLoadSaved,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

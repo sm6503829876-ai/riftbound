@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(lsof:*)",
+      "Bash(node -e:*)",
+      "Bash(# 查看 Colyseus 0.16 服务端是否有房间列表 HTTP 接口 curl -s http://localhost:2567/matchmake/rift_battle)",
+      "Bash(curl:*)",
+      "Bash(ls /Users/suming1/Desktop/riftbound/backend/node_modules/colyseus/build/ grep -rn \"getAvailableRooms\\\\|filterRooms\\\\|\\\\/rooms\\\\|availableRooms\" /Users/suming1/Desktop/riftbound/backend/node_modules/colyseus/)"
+    ]
+  }
+}

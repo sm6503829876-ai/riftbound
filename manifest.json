@@ -1,0 +1,18 @@
+{
+  "name": "符文战场 · Riftbound",
+  "short_name": "符文战场",
+  "description": "移动端卡牌对战沙盒",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%23020617'/><text y='320' x='50%' text-anchor='middle' font-size='320'>⚔️</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
