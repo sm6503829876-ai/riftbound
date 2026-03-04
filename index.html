@@ -1007,6 +1007,16 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                     <span class="text-[7px] pointer-events-none">备牌</span>
                     <span class="font-bold text-xs pointer-events-none">{{ playerSideboard.length }}</span>
                 </div>
+                <!-- 战场牌池 -->
+                <div v-if="fieldPool.length"
+                     @dragover.prevent @drop.stop="!isSpectator && onDropToFieldPool($event)"
+                     @contextmenu.prevent="openZoneMenu($event,'fieldPool')"
+                     @click="viewZone('fieldPool')"
+                     data-zone="fieldPool"
+                     class="w-10 h-12 border border-amber-600/40 bg-amber-950/20 rounded flex flex-col items-center justify-center text-amber-400 shadow-inner cursor-pointer hover:bg-amber-900/40 transition-colors">
+                    <span class="text-[7px] pointer-events-none">战场</span>
+                    <span class="font-bold text-xs pointer-events-none">{{ fieldPool.length }}</span>
+                </div>
             </div>
             <div class="flex flex-col space-y-1">
                 <!-- 英雄格 -->
@@ -1188,6 +1198,7 @@ createApp({
     const playerBoardUnits = reactive([[], []]);
     const playerStaticCards = reactive({ champion: null, legend: null });
     const fieldCards        = reactive([null, null]);
+    const fieldPool         = reactive([]);           // 战场牌池（导入的战场牌暂存区）
     const runeDeck          = reactive([]);
     const playerRunes       = reactive(Array(12).fill(null));
     const playerRuneDeckCount = computed(() => runeDeck.length);
@@ -1281,7 +1292,7 @@ createApp({
     const getCardTypeTagClass  = t => (TYPE_STYLES[t]||DS).tag;
     const getCardTypeEmoji     = t => (TYPE_STYLES[t]||DS).emoji;
 
-    const getZoneName = id => ({deck:'主牌库',discard:'废牌堆',sideboard:'备牌区',runeDeck:'符文堆',legend:'传奇格',champion:'英雄格'}[id]||id);
+    const getZoneName = id => ({deck:'主牌库',discard:'废牌堆',sideboard:'备牌区',runeDeck:'符文堆',legend:'传奇格',champion:'英雄格',fieldPool:'战场牌池'}[id]||id);
     const currentZoneArray = computed(() => {
       if (viewingZone.value==='deck')      return mainDeck;
       if (viewingZone.value==='discard')   return playerDiscard;
@@ -1289,6 +1300,7 @@ createApp({
       if (viewingZone.value==='runeDeck')  return runeDeck;
       if (viewingZone.value==='legend')    return playerStaticCards.legend   ? [playerStaticCards.legend]   : [];
       if (viewingZone.value==='champion')  return playerStaticCards.champion ? [playerStaticCards.champion] : [];
+      if (viewingZone.value==='fieldPool') return fieldPool;
       return [];
     });
 
@@ -1448,7 +1460,7 @@ createApp({
       deckInput.value = ''; syncNotice.value = '';
       viewingZone.value = null; inspectingCard.value = null; zoneMenu.visible = false;
       // 重置游戏牌区
-      mainDeck.splice(0); playerHand.splice(0); playerDiscard.splice(0); playerSideboard.splice(0);
+      mainDeck.splice(0); playerHand.splice(0); playerDiscard.splice(0); playerSideboard.splice(0); fieldPool.splice(0);
       playerBaseUnits.splice(0); playerBoardUnits[0].splice(0); playerBoardUnits[1].splice(0);
       Object.assign(playerStaticCards, { champion: null, legend: null });
       fieldCards[0] = null; fieldCards[1] = null;
@@ -1751,15 +1763,13 @@ createApp({
           (p.f||[]).forEach(([i,cnt]) => { if(all[i]) for(let n=0;n<cnt;n++) data.fields.push(all[i]); });
         }
         mainDeck.length = 0; playerHand.length = 0; playerSideboard.length = 0; runeDeck.length = 0;
-        fieldCards[0] = null; fieldCards[1] = null;
+        fieldCards[0] = null; fieldCards[1] = null; fieldPool.length = 0;
         if (data.main)      mainDeck.push(...data.main.map(c => ({...enrichCard(c), tokens:0, id:mkId()})));
         if (data.sideboard) playerSideboard.push(...data.sideboard.map(c => ({...enrichCard(c), tokens:0, id:mkId()})));
         if (data.runes)     runeDeck.push(...data.runes.map(c => ({...enrichCard(c), tokens:0, id:'rune-'+mkId()})));
-        // 战场牌直接放入战场格（最多2格），不进主牌堆
+        // 战场牌放入战场牌池，玩家自行拖到战场格使用
         if (data.fields) {
-          data.fields.slice(0, 2).forEach((c, i) => {
-            fieldCards[i] = { ...enrichCard(c), tokens:0, id:'field-'+mkId(), x:50, y:50, tapped:false };
-          });
+          fieldPool.push(...data.fields.map(c => ({...enrichCard(c), tokens:0, id:'field-'+mkId(), x:50, y:50, tapped:false})));
         }
         shuffleZone('deck'); shuffleZone('runeDeck');
         playerStaticCards.legend   = data.legend   ? {...enrichCard(data.legend),   id:'legend-'+Date.now(),   x:50, y:50, tapped:false, tokens:0} : null;
@@ -1857,7 +1867,7 @@ createApp({
       const id = inspectingCard.value.card.id;
       const rm = arr => { const i = arr.findIndex(c => c?.id === id); if (i !== -1) arr.splice(i, 1); };
       rm(playerHand); rm(playerDiscard); rm(playerSideboard);
-      rm(playerBaseUnits);
+      rm(playerBaseUnits); rm(fieldPool);
       playerBoardUnits.forEach(lane => rm(lane));
       if (fieldCards[0]?.id === id) fieldCards[0] = null;
       if (fieldCards[1]?.id === id) fieldCards[1] = null;
@@ -1941,6 +1951,7 @@ createApp({
       else if (source==='deck')     mainDeck.splice(indexOrZone,1);
       else if (source==='discard')  playerDiscard.splice(indexOrZone,1);
       else if (source==='sideboard')playerSideboard.splice(indexOrZone,1);
+      else if (source==='fieldPool')fieldPool.splice(indexOrZone,1);
       else if (source==='runeDeck') runeDeck.splice(indexOrZone,1);
     };
 
@@ -1977,6 +1988,12 @@ createApp({
       const {card,source,indexOrZone}=draggedCard.value;
       playerSideboard.push(card); rmFromSource(source,indexOrZone,card.id);
       room.value?.send('moveCard',{zoneId:'sideboard',cardId:card.id,source}); draggedCard.value=null;
+    };
+    const onDropToFieldPool = ev => {
+      if (!draggedCard.value||draggedCard.value.source==='rune') return;
+      const {card,source,indexOrZone}=draggedCard.value;
+      fieldPool.push(card); rmFromSource(source,indexOrZone,card.id);
+      room.value?.send('moveCard',{zoneId:'fieldPool',cardId:card.id,source}); draggedCard.value=null;
     };
     const onDropToRuneDeck = ev => {
       if (!draggedCard.value) return;
@@ -2034,6 +2051,7 @@ createApp({
       if (zone === 'deck')     { onDropToDeck();     return; }
       if (zone === 'discard')  { onDropToDiscard();  return; }
       if (zone === 'sideboard'){ onDropToSideboard();return; }
+      if (zone === 'fieldPool'){ onDropToFieldPool();return; }
       if (zone === 'runeDeck') { onDropToRuneDeck(); return; }
       // 需要坐标的区域（板上、基地、战场格、静态格）
       const fakeEv = { currentTarget: zoneEl, clientX: x, clientY: y };
@@ -2327,7 +2345,7 @@ createApp({
       showTokenFetch, tokenQuery, tokenResults, spawnTokenCard, onTokenTouchStart, onTokenTouchEnd,
       // 玩家牌区
       playerHand, playerDiscard, playerSideboard, playerBaseUnits, playerBoardUnits,
-      playerStaticCards, fieldCards, playerRunes, playerRuneDeckCount, playerScore, mainDeck, runeDeck,
+      playerStaticCards, fieldCards, fieldPool, playerRunes, playerRuneDeckCount, playerScore, mainDeck, runeDeck,
       // 对手
       oppState, opponentBaseUnits, opponentBoardUnits, oppStaticCards,
       // 操作
@@ -2335,7 +2353,7 @@ createApp({
       viewZone, shuffleZone, openZoneMenu, inspectCard, modifyToken, deleteInspectedCard, renderEffect,
       drawCard, spawnRune, handleRuneClick, handleRuneDblClick, toggleTap, changeScore,
       onDragStart, onDragStartFromViewer, onDragEndFromViewer,
-      onDrop, onDropToDeck, onDropToDiscard, onDropToSideboard, onDropToRuneDeck, onDropToHand,
+      onDrop, onDropToDeck, onDropToDiscard, onDropToSideboard, onDropToFieldPool, onDropToRuneDeck, onDropToHand,
       onCardTouchStart, onCardTouchStartFromViewer,
       reconnecting, reconnectMsg,
       // 手势信号
