@@ -1926,18 +1926,23 @@ createApp({
       const full = dbCard
         ? { ...card, effect: dbCard.effect || card.effect || '', flavor: dbCard.flavor || '', rarity: dbCard.rarity || '' }
         : card;
-      inspectingCard.value = { card: full, zone };
+      inspectingCard.value = { card: full, zone, _orig: card };
     };
     const modifyToken = amount => {
       if (!inspectingCard.value?.card || isSpectator.value) return;
       inspectingCard.value.card.tokens += amount;
+      const orig = inspectingCard.value._orig;
+      if (orig) orig.tokens = inspectingCard.value.card.tokens;
       room.value?.send('gameAction', { type:'UPDATE_TOKEN', cardId:inspectingCard.value.card.id, tokens:inspectingCard.value.card.tokens });
     };
     const toggleFaceDown = () => {
       if (!inspectingCard.value?.card || isSpectator.value) return;
       const card = inspectingCard.value.card;
-      card.faceDown = !card.faceDown;
-      room.value?.send('gameAction', { type:'FACE_DOWN', cardId:card.id, faceDown:card.faceDown });
+      const orig = inspectingCard.value._orig;
+      const newVal = !card.faceDown;
+      card.faceDown = newVal;
+      if (orig) orig.faceDown = newVal;
+      room.value?.send('gameAction', { type:'FACE_DOWN', cardId:card.id, faceDown:newVal });
     };
     const deleteInspectedCard = () => {
       if (!inspectingCard.value?.card || isSpectator.value) return;
