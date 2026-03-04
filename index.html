@@ -63,12 +63,10 @@
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
 </div>
 <script>
-// Vue 挂载完成后移除 loading 画面
-const _removeLoading = () => { const el = document.getElementById('loading-screen'); if(el) el.remove(); };
-const _origMount = Vue.createApp.prototype?.mount;
-document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading, 300); });
+// 安全兜底：如果 Vue 挂载失败，5秒后也移除 loading（避免永远卡住）
+setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) el.remove(); }, 5000);
 </script>
-<div id="app" v-cloak class="h-full w-full flex flex-col relative max-w-md mx-auto bg-slate-950 border-x border-slate-800 shadow-2xl text-[10px]">
+<div id="app" v-cloak style="opacity:0" class="h-full w-full flex flex-col relative max-w-md mx-auto bg-slate-950 border-x border-slate-800 shadow-2xl text-[10px]">
 
 <!-- ╔══════════════════════════════════════════════════════╗
      ║  1. 登录界面                                          ║
@@ -2469,10 +2467,16 @@ createApp({
     };
   }
 }).mount('#app');
-// 移除 loading 画面
-const _ls = document.getElementById('loading-screen');
-if (_ls) _ls.style.transition = 'opacity 0.3s'; _ls && (_ls.style.opacity = '0');
-setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) el.remove(); }, 350);
+// 等待浏览器完成 Tailwind CSS 处理后再显示界面（双 rAF 确保样式已计算）
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    const appEl = document.getElementById('app');
+    if (appEl) { appEl.style.transition = 'opacity 0.2s'; appEl.style.opacity = '1'; }
+    const ls = document.getElementById('loading-screen');
+    if (ls) { ls.style.transition = 'opacity 0.25s'; ls.style.opacity = '0'; }
+    setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) el.remove(); }, 300);
+  });
+});
 </script>
 </body>
 </html>
