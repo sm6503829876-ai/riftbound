@@ -1499,16 +1499,24 @@ createApp({
     };
 
     // ══ 游戏内选择角色 ══════════════════════════════════════════
+    let _claimLock = false;
     const claimRole = (role) => {
+      if (_claimLock) return;
+      _claimLock = true;
       room.value.send('claimSeat', { nickname: myNickname.value, role });
       showRoleOverlay.value = false;
       if (role === 'player') showDeckLoader.value = true;
+      setTimeout(() => { _claimLock = false; }, 1000);
     };
 
     // ══ 游戏内切换角色（起立 / 坐下）══════════════════════════
+    let _switchLock = false;
     const requestSwitchRole = () => {
+      if (_switchLock) return;
+      _switchLock = true;
       const newRole = isSpectator.value ? 'player' : 'spectator';
       room.value?.send('switchRole', { nickname: myNickname.value, newRole });
+      setTimeout(() => { _switchLock = false; }, 1000);
     };
 
     // ══ 退出房间，返回大厅 ══════════════════════════════════════
@@ -1667,6 +1675,8 @@ createApp({
       room.value.onLeave(code => {
         // code 1000 = 主动离开（用户点"离开"按钮）
         if (code === 1000 || screen.value !== 'game') return;
+        // 防止多次触发重连
+        if (reconnecting.value) return;
         // 其他 code = 意外断线 → 尝试重连
         const savedRoomId    = myRoomId.value;
         const savedSessionId = mySessionId.value;
@@ -1683,11 +1693,10 @@ createApp({
           reconnectMsg.value = `连接断开，正在重连…（${attempt}/3）`;
           await new Promise(r => setTimeout(r, 2000 * attempt));
           try {
-            const SDK = window.Colyseus || window.colyseus;
             const newRoom = await colyseusClient.value.reconnect(savedRoomId, savedSessionId);
             room.value = newRoom;
             mySessionId.value = newRoom.sessionId;
-            setupRoomHandlers();
+            setupRoomHandlers();  // 重新注册消息监听（包括 onLeave）
             reconnecting.value = false;
             reconnectMsg.value = '';
             showSyncNotice('✅ 重连成功！');

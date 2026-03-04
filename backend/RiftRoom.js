@@ -17,6 +17,9 @@ class RiftRoom extends colyseus.Room {
 
         // ── 声明角色（加入房间后发送）──────────────────────────────
         this.onMessage("claimSeat", (client, { nickname, role }) => {
+            // 防止重复 claimSeat：已有座位或已是观战者则忽略
+            if (this._seat(client.sessionId) >= 0 || this.spectatorMap.has(client.sessionId)) return;
+
             const availableSeat = this.seats.findIndex(s => !s);
             if (role === 'player' && availableSeat !== -1) {
                 this.seats[availableSeat] = { sessionId: client.sessionId, nickname };
@@ -42,6 +45,11 @@ class RiftRoom extends colyseus.Room {
 
         // ── 游戏内切换角色 ──────────────────────────────────────────
         this.onMessage("switchRole", (client, { nickname, newRole }) => {
+            // 防抖：500ms 内同一客户端不能重复切换
+            const now = Date.now();
+            if (client._lastSwitch && now - client._lastSwitch < 500) return;
+            client._lastSwitch = now;
+
             const currentSeat = this._seat(client.sessionId);
             const isSpectator = this.spectatorMap.has(client.sessionId);
 
