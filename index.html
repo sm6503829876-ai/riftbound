@@ -602,6 +602,11 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                  @dragend="onDragEndFromViewer"
                  @touchstart="onCardTouchStartFromViewer($event, card, viewingZone, idx)"
                  @contextmenu.prevent="inspectCard(card, viewingZone)">
+                <template v-if="card.faceDown">
+                    <div class="absolute inset-0 rounded-lg card-back"></div>
+                    <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[8px] text-slate-500 font-bold">盖牌</span></div>
+                </template>
+                <template v-else>
                 <div class="absolute inset-0 rounded-lg" :class="cardGradient(card)"></div>
                 <div class="relative z-10 h-full flex flex-col p-1.5">
                     <div class="flex justify-between items-start">
@@ -616,6 +621,7 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                     </div>
                     <div class="text-[8px] text-slate-400 leading-none">{{ card.type }}</div>
                 </div>
+                </template>
             </div>
         </div>
     </div>
@@ -676,6 +682,11 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                     <span class="text-yellow-400 font-black text-xl w-7 text-center drop-shadow-[0_0_8px_rgba(250,204,21,0.6)]">{{ inspectingCard.card.tokens || 0 }}</span>
                     <button @click="modifyToken(1)" :disabled="isSpectator" class="w-8 h-8 rounded-full bg-slate-700 text-yellow-500 text-lg font-bold hover:bg-slate-600 active:scale-90 flex items-center justify-center transition-transform disabled:opacity-40">+</button>
                 </div>
+                <button @click="!isSpectator && toggleFaceDown()" :disabled="isSpectator"
+                        class="px-3 py-1.5 border text-[11px] font-bold rounded-full transition-colors disabled:opacity-40 shrink-0"
+                        :class="inspectingCard.card.faceDown ? 'bg-amber-900/80 hover:bg-amber-700 border-amber-600/60 text-amber-200' : 'bg-slate-700/80 hover:bg-slate-600 border-slate-500/60 text-slate-200'">
+                    {{ inspectingCard.card.faceDown ? '🔄 翻开' : '🂠 盖牌' }}
+                </button>
                 <button @click="!isSpectator && deleteInspectedCard()" :disabled="isSpectator"
                         class="px-3 py-1.5 bg-red-900/80 hover:bg-red-700 border border-red-600/60 text-red-200 text-[11px] font-bold rounded-full transition-colors disabled:opacity-40 shrink-0">
                     🗑 移除
@@ -833,6 +844,11 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                  class="absolute w-12 h-16 border-2 rounded overflow-hidden shadow-lg z-40"
                  :class="[cardBorder(unit), unit.tapped?'tapped':'']"
                  :style="{left:(100-(unit.x||50))+'%',top:(100-(unit.y||50))+'%',transform:'translate(-50%,-50%)'}">
+                <template v-if="unit.faceDown">
+                    <div class="absolute inset-0 card-back"></div>
+                    <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[6px] text-slate-500 font-bold">盖牌</span></div>
+                </template>
+                <template v-else>
                 <div class="absolute inset-0" :class="cardGradient(unit)"></div>
                 <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
                 <div class="relative z-10 h-full flex flex-col p-0.5">
@@ -843,6 +859,7 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                     <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
                     <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
                 </div>
+                </template>
             </div>
         </div>
 
@@ -853,6 +870,11 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                      class="absolute w-12 h-16 border-2 rounded overflow-hidden transition-transform shadow-md z-40"
                      :class="[cardBorder(unit), unit.tapped?'tapped':'']"
                      :style="{left:(100-(unit.x||50))+'%',top:(100-(unit.y||50))+'%',transform:'translate(-50%,-50%)'}">
+                    <template v-if="unit.faceDown">
+                        <div class="absolute inset-0 card-back"></div>
+                        <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[6px] text-slate-500 font-bold">盖牌</span></div>
+                    </template>
+                    <template v-else>
                     <div class="absolute inset-0" :class="cardGradient(unit)"></div>
                     <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
                     <div class="relative z-10 h-full flex flex-col p-0.5">
@@ -863,6 +885,7 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                         <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
                         <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
                     </div>
+                    </template>
                 </div>
             </div>
         </div>
@@ -881,12 +904,18 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                      @dragstart="!isSpectator && onDragStart($event, fieldCards[0], 'field', 0)"
                      @touchstart="!isSpectator && onCardTouchStart($event, fieldCards[0], 'field', 0)"
                      @contextmenu.prevent="inspectCard(fieldCards[0], 'field')">
+                    <template v-if="fieldCards[0].faceDown">
+                        <div class="absolute inset-0 card-back"></div>
+                        <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[6px] text-slate-500 font-bold">盖牌</span></div>
+                    </template>
+                    <template v-else>
                     <div class="absolute inset-0" :class="cardGradient(fieldCards[0])"></div>
                     <div v-if="fieldCards[0].tokens" class="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[6px] z-20">{{ fieldCards[0].tokens>0?'+':'' }}{{ fieldCards[0].tokens }}</div>
                     <div class="relative z-10 h-full flex flex-col p-0.5">
                         <span class="text-[6px] font-black text-yellow-300 leading-none">{{ fieldCards[0].energy??'—' }}</span>
                         <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ fieldCards[0].name }}</span></div>
                     </div>
+                    </template>
                 </div>
             </div>
 
@@ -918,12 +947,18 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                      @dragstart="!isSpectator && onDragStart($event, fieldCards[1], 'field', 1)"
                      @touchstart="!isSpectator && onCardTouchStart($event, fieldCards[1], 'field', 1)"
                      @contextmenu.prevent="inspectCard(fieldCards[1], 'field')">
+                    <template v-if="fieldCards[1].faceDown">
+                        <div class="absolute inset-0 card-back"></div>
+                        <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[6px] text-slate-500 font-bold">盖牌</span></div>
+                    </template>
+                    <template v-else>
                     <div class="absolute inset-0" :class="cardGradient(fieldCards[1])"></div>
                     <div v-if="fieldCards[1].tokens" class="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[6px] z-20">{{ fieldCards[1].tokens>0?'+':'' }}{{ fieldCards[1].tokens }}</div>
                     <div class="relative z-10 h-full flex flex-col p-0.5">
                         <span class="text-[6px] font-black text-yellow-300 leading-none">{{ fieldCards[1].energy??'—' }}</span>
                         <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ fieldCards[1].name }}</span></div>
                     </div>
+                    </template>
                 </div>
             </div>
         </div>
@@ -943,6 +978,11 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                      class="absolute w-12 h-16 border-2 rounded overflow-hidden shadow-lg transition-transform z-40"
                      :class="[cardBorder(unit), unit.tapped?'tapped':'', !isSpectator?'draggable':'']"
                      :style="{left:unit.x+'%',top:unit.y+'%',transform:'translate(-50%,-50%)'}">
+                    <template v-if="unit.faceDown">
+                        <div class="absolute inset-0 card-back"></div>
+                        <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[6px] text-slate-500 font-bold">盖牌</span></div>
+                    </template>
+                    <template v-else>
                     <div class="absolute inset-0" :class="cardGradient(unit)"></div>
                     <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow-sm">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
                     <div class="relative z-10 h-full flex flex-col p-0.5">
@@ -953,6 +993,7 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                         <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
                         <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
                     </div>
+                    </template>
                 </div>
             </div>
         </div>
@@ -968,6 +1009,11 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                  class="absolute w-12 h-16 border-2 rounded overflow-hidden shadow-lg transition-transform z-40"
                  :class="[cardBorder(unit), unit.tapped?'tapped':'', !isSpectator?'draggable':'']"
                  :style="{left:unit.x+'%',top:unit.y+'%',transform:'translate(-50%,-50%)'}">
+                <template v-if="unit.faceDown">
+                    <div class="absolute inset-0 card-back"></div>
+                    <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[6px] text-slate-500 font-bold">盖牌</span></div>
+                </template>
+                <template v-else>
                 <div class="absolute inset-0" :class="cardGradient(unit)"></div>
                 <div v-if="unit.tokens" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[8px] z-20 shadow-sm">{{ unit.tokens>0?'+':'' }}{{ unit.tokens }}</div>
                 <div class="relative z-10 h-full flex flex-col p-0.5">
@@ -978,6 +1024,7 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                     <div class="flex-1 flex items-center justify-center"><span class="text-[7px] font-bold text-white text-center leading-tight">{{ unit.name }}</span></div>
                     <div class="text-[6px] text-center text-slate-400 leading-none">{{ unit.type }}</div>
                 </div>
+                </template>
             </div>
         </div>
     </div>
@@ -993,6 +1040,10 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                      class="w-10 h-12 border-2 rounded flex items-center justify-center text-[7px] font-bold text-center p-0.5 transition-all relative overflow-hidden cursor-pointer"
                      :class="playerStaticCards['legend']?cardBorder(playerStaticCards['legend']):'border-blue-700/40 bg-blue-900/20 text-blue-500'">
                     <span v-if="!playerStaticCards['legend']" class="pointer-events-none">传奇</span>
+                    <template v-else-if="playerStaticCards['legend'].faceDown">
+                        <div class="absolute inset-0 card-back"></div>
+                        <span class="relative z-10 text-[6px] text-slate-500 font-bold">盖牌</span>
+                    </template>
                     <template v-else>
                         <div class="absolute inset-0" :class="cardGradient(playerStaticCards['legend'])"></div>
                         <div v-if="playerStaticCards['legend'].tokens" class="absolute top-0 right-0 w-3.5 h-3.5 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[7px] z-10">{{ playerStaticCards['legend'].tokens>0?'+':'' }}{{ playerStaticCards['legend'].tokens }}</div>
@@ -1026,6 +1077,10 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                      class="w-10 h-12 border-2 rounded flex items-center justify-center text-[7px] font-bold text-center p-0.5 transition-all relative overflow-hidden cursor-pointer"
                      :class="playerStaticCards['champion']?cardBorder(playerStaticCards['champion']):'border-blue-700/40 bg-blue-900/20 text-blue-500'">
                     <span v-if="!playerStaticCards['champion']" class="pointer-events-none">英雄</span>
+                    <template v-else-if="playerStaticCards['champion'].faceDown">
+                        <div class="absolute inset-0 card-back"></div>
+                        <span class="relative z-10 text-[6px] text-slate-500 font-bold">盖牌</span>
+                    </template>
                     <template v-else>
                         <div class="absolute inset-0" :class="cardGradient(playerStaticCards['champion'])"></div>
                         <div v-if="playerStaticCards['champion'].tokens" class="absolute top-0 right-0 w-3.5 h-3.5 bg-yellow-400 text-yellow-900 font-bold rounded-full flex items-center justify-center text-[7px] z-10">{{ playerStaticCards['champion'].tokens>0?'+':'' }}{{ playerStaticCards['champion'].tokens }}</div>
@@ -1112,6 +1167,11 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
              :draggable="!isSpectator"
              @dragstart="!isSpectator && onDragStart($event,card,'hand',idx)"
              @touchstart="!isSpectator && onCardTouchStart($event,card,'hand',idx)">
+            <template v-if="card.faceDown">
+                <div class="absolute inset-0 rounded-xl card-back border-slate-600"></div>
+                <div class="relative z-10 h-full flex items-center justify-center pointer-events-none"><span class="text-[8px] text-slate-500 font-bold">盖牌</span></div>
+            </template>
+            <template v-else>
             <div class="absolute inset-0 rounded-xl" :class="cardGradient(card)"></div>
             <div v-if="card.tokens" class="absolute -top-2 -right-2 w-5 h-5 bg-yellow-400 text-yellow-900 font-black rounded-full flex items-center justify-center text-[10px] z-20 shadow">{{ card.tokens>0?'+':'' }}{{ card.tokens }}</div>
             <div class="relative z-10 h-full flex flex-col p-1.5 pointer-events-none">
@@ -1127,6 +1187,7 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
                 </div>
                 <div class="text-[7px] text-slate-400 leading-none">{{ card.type }}</div>
             </div>
+            </template>
         </div>
     </div>
 
@@ -1550,6 +1611,7 @@ createApp({
           // 观战者接收 seat0 的动作
           if (msg.type==='MY_SCORE_CHANGED') playerScore.value = msg.newScore;
           if (msg.type==='UPDATE_TOKEN') applyToken(playerBaseUnits, playerBoardUnits, playerStaticCards, msg);
+          if (msg.type==='FACE_DOWN')  applyFaceDown(playerBaseUnits, playerBoardUnits, playerStaticCards, msg);
         } else {
           // 对手动作（玩家）或 seat1 动作（观战者）
           if (msg.type==='DRAW')             { oppState.handCount++; oppState.deckCount--; }
@@ -1557,6 +1619,7 @@ createApp({
           if (msg.type==='RETURN_RUNE')      oppState.runesCount = Math.max(0, oppState.runesCount-1);
           if (msg.type==='MY_SCORE_CHANGED') oppState.score = msg.newScore;
           if (msg.type==='UPDATE_TOKEN')     applyToken(opponentBaseUnits, opponentBoardUnits, oppStaticCards, msg);
+          if (msg.type==='FACE_DOWN')        applyFaceDown(opponentBaseUnits, opponentBoardUnits, oppStaticCards, msg);
         }
         // 手势信号：双方都显示（包括观战者）
         if (msg.type==='SIGNAL') {
@@ -1680,6 +1743,14 @@ createApp({
       if (statics.legend?.id  ===msg.cardId) statics.legend.tokens   = msg.tokens;
       if (fieldCards[0]?.id===msg.cardId) fieldCards[0].tokens = msg.tokens;
       if (fieldCards[1]?.id===msg.cardId) fieldCards[1].tokens = msg.tokens;
+    };
+    const applyFaceDown = (baseU, boardU, statics, msg) => {
+      const upd = arr => { const u = arr.find(x => x.id===msg.cardId); if(u) u.faceDown = msg.faceDown; };
+      upd(baseU); boardU.forEach(upd);
+      if (statics.champion?.id===msg.cardId) statics.champion.faceDown = msg.faceDown;
+      if (statics.legend?.id  ===msg.cardId) statics.legend.faceDown   = msg.faceDown;
+      if (fieldCards[0]?.id===msg.cardId) fieldCards[0].faceDown = msg.faceDown;
+      if (fieldCards[1]?.id===msg.cardId) fieldCards[1].faceDown = msg.faceDown;
     };
 
     // ══ 生命周期 ════════════════════════════════════════════════
@@ -1861,6 +1932,12 @@ createApp({
       if (!inspectingCard.value?.card || isSpectator.value) return;
       inspectingCard.value.card.tokens += amount;
       room.value?.send('gameAction', { type:'UPDATE_TOKEN', cardId:inspectingCard.value.card.id, tokens:inspectingCard.value.card.tokens });
+    };
+    const toggleFaceDown = () => {
+      if (!inspectingCard.value?.card || isSpectator.value) return;
+      const card = inspectingCard.value.card;
+      card.faceDown = !card.faceDown;
+      room.value?.send('gameAction', { type:'FACE_DOWN', cardId:card.id, faceDown:card.faceDown });
     };
     const deleteInspectedCard = () => {
       if (!inspectingCard.value?.card || isSpectator.value) return;
@@ -2350,7 +2427,7 @@ createApp({
       oppState, opponentBaseUnits, opponentBoardUnits, oppStaticCards,
       // 操作
       loadDefaultDeck, importDeck,
-      viewZone, shuffleZone, openZoneMenu, inspectCard, modifyToken, deleteInspectedCard, renderEffect,
+      viewZone, shuffleZone, openZoneMenu, inspectCard, modifyToken, toggleFaceDown, deleteInspectedCard, renderEffect,
       drawCard, spawnRune, handleRuneClick, handleRuneDblClick, toggleTap, changeScore,
       onDragStart, onDragStartFromViewer, onDragEndFromViewer,
       onDrop, onDropToDeck, onDropToDiscard, onDropToSideboard, onDropToFieldPool, onDropToRuneDeck, onDropToHand,
