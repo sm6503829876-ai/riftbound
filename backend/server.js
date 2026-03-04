@@ -3,21 +3,31 @@ const http = require("http");
 const express = require("express");
 const path = require("path");
 const cors = require("cors");
+const compression = require("compression");
 const os = require("os");
 const { RiftRoom } = require("./RiftRoom");
 
 const port = process.env.PORT || 2567;
 const app = express();
 
+// gzip 压缩（index.html 153KB→~35KB，cards.json 283KB→~40KB）
+app.use(compression());
+
 // 允许跨域请求
 app.use(cors());
 app.use(express.json());
 
-// 本地提供浏览器端 Colyseus SDK，避免依赖外网 CDN
-app.use("/colyseus-sdk", express.static(path.join(__dirname, "node_modules", "colyseus.js", "dist")));
+// Colyseus SDK（长期缓存，30天）
+app.use("/colyseus-sdk", express.static(
+    path.join(__dirname, "node_modules", "colyseus.js", "dist"),
+    { maxAge: '30d', immutable: true }
+));
 
-// 静态文件服务（供局域网手机端访问 index.html、manifest.json、sw.js 等）
-app.use(express.static(path.join(__dirname, "..")));
+// 静态文件服务（短缓存 + ETag 自动验证）
+app.use(express.static(path.join(__dirname, ".."), {
+    maxAge: '1h',
+    etag: true,
+}));
 
 // 创建基础的 HTTP 服务器
 const server = http.createServer(app);
