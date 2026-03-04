@@ -554,7 +554,7 @@ document.addEventListener('DOMContentLoaded', () => { setTimeout(_removeLoading,
     <div v-if="showDeckLoader" class="absolute inset-0 bg-slate-900/97 z-[90] flex flex-col items-center justify-center p-6">
         <div class="text-4xl mb-3">🃏</div>
         <h2 class="text-blue-400 text-lg font-bold mb-1 tracking-widest uppercase">准备卡组</h2>
-        <p class="text-slate-500 text-[10px] mb-4 text-center">粘贴 JSON 卡组数据，或使用默认卡组</p>
+        <p class="text-slate-500 text-[10px] mb-4 text-center">粘贴牌组代码或 JSON 卡组数据，或使用默认卡组</p>
         <textarea v-model="deckInput" placeholder='{ "legend":{}, "main":[], "runes":[], "sideboard":[] }'
                   class="w-full h-44 bg-slate-800 border border-slate-700 rounded-lg p-3 text-[9px] font-mono mb-4 text-slate-300 outline-none focus:border-blue-500 transition-colors resize-none"></textarea>
         <div v-if="dbSavedJson" class="w-full mb-3">
@@ -1734,7 +1734,22 @@ createApp({
 
     const importDeck = () => {
       try {
-        const data = JSON.parse(deckInput.value);
+        const raw = deckInput.value.trim();
+        let data;
+        // 尝试解析为 JSON（旧格式）
+        try { data = JSON.parse(raw); } catch(_) {}
+        // 如果不是 JSON，尝试 Base64 牌组代码（组牌系统导出格式）
+        if (!data) {
+          const all = dbAllCards.value.filter(c => !c.isToken);
+          const p = JSON.parse(atob(raw));
+          data = { main: [], runes: [], sideboard: [], fields: [] };
+          if (p.l >= 0 && all[p.l]) data.legend = all[p.l];
+          if (p.c >= 0 && all[p.c]) data.champion = all[p.c];
+          (p.m||[]).forEach(([i,cnt]) => { if(all[i]) for(let n=0;n<cnt;n++) data.main.push(all[i]); });
+          (p.r||[]).forEach(([i,cnt]) => { if(all[i]) for(let n=0;n<cnt;n++) data.runes.push(all[i]); });
+          (p.s||[]).forEach(([i,cnt]) => { if(all[i]) for(let n=0;n<cnt;n++) data.sideboard.push(all[i]); });
+          (p.f||[]).forEach(([i,cnt]) => { if(all[i]) for(let n=0;n<cnt;n++) data.fields.push(all[i]); });
+        }
         mainDeck.length = 0; playerHand.length = 0; playerSideboard.length = 0; runeDeck.length = 0;
         fieldCards[0] = null; fieldCards[1] = null;
         if (data.main)      mainDeck.push(...data.main.map(c => ({...enrichCard(c), tokens:0, id:mkId()})));
@@ -1750,7 +1765,7 @@ createApp({
         playerStaticCards.legend   = data.legend   ? {...enrichCard(data.legend),   id:'legend-'+Date.now(),   x:50, y:50, tapped:false, tokens:0} : null;
         playerStaticCards.champion = data.champion ? {...enrichCard(data.champion), id:'champion-'+Date.now(), x:50, y:50, tapped:false, tokens:0} : null;
         showDeckLoader.value = false;
-      } catch(e) { alert('JSON 格式有误，请检查后重试。'); }
+      } catch(e) { alert('牌组代码无效，请检查后重试。'); }
     };
 
     // ══ 指示物召唤 ══════════════════════════════════════════════
