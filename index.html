@@ -50,6 +50,20 @@
         @keyframes signal-fade-out { from{opacity:1} to{opacity:0} }
         .signal-enter-active { animation: signal-pop 0.45s cubic-bezier(.22,1,.36,1) both; }
         .signal-leave-active { animation: signal-fade-out 0.3s ease both; }
+        @keyframes deck-shuffle {
+          0%   { transform:translateX(0) rotate(0); }
+          10%  { transform:translateX(-4px) rotate(-3deg); }
+          20%  { transform:translateX(4px) rotate(3deg); }
+          30%  { transform:translateX(-3px) rotate(-2deg); }
+          40%  { transform:translateX(3px) rotate(2deg); }
+          50%  { transform:translateX(-2px) rotate(-1.5deg); }
+          60%  { transform:translateX(2px) rotate(1.5deg); }
+          70%  { transform:translateX(-1px) rotate(-1deg); }
+          80%  { transform:translateX(1px) rotate(1deg); }
+          90%  { transform:translateX(-0.5px) rotate(0); }
+          100% { transform:translateX(0) rotate(0); }
+        }
+        .deck-shuffling { animation: deck-shuffle 0.5s ease-in-out; }
     </style>
 </head>
 
@@ -1121,7 +1135,7 @@ setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) 
                  @contextmenu.prevent="openZoneMenu($event,'deck')"
                  data-zone="deck"
                  class="w-10 h-12 border-2 border-blue-400 bg-blue-900 rounded card-back flex flex-col items-center justify-center text-blue-100 font-bold transition-all active:scale-90 shadow-lg"
-                 :class="!isSpectator ? 'cursor-pointer' : 'cursor-default'">
+                 :class="[!isSpectator ? 'cursor-pointer' : 'cursor-default', deckShuffling ? 'deck-shuffling' : '']"
                 <span class="text-[7px] pointer-events-none">主牌</span>
                 <span class="text-xs pointer-events-none">{{ mainDeck.length }}</span>
             </div>
@@ -1241,6 +1255,7 @@ createApp({
     const playerCount         = ref(0);
     const showTokenFetch      = ref(false);
     const tokenQuery          = ref('');
+    const deckShuffling       = ref(false);    // 牌堆洗牌动画中
     const cardDb              = reactive({});   // 卡牌数据库 name→entry
     const dbAllCards          = ref([]);        // 组牌工具用：卡牌完整数组
 
@@ -1268,14 +1283,17 @@ createApp({
     const oppState           = reactive({ score:0, deckCount:40, discard:0, sideboardCount:8, runesCount:0, handCount:0 });
 
     // ══ TCG 手势信号 ════════════════════════════════════════════
+    const DICE_FACES = ['⚀','⚁','⚂','⚃','⚄','⚅'];
     const SIGNALS = [
       { key:'WAIT',  icon:'❗', label:'WAIT!', color:'text-red-400'     },
       { key:'PASS',  icon:'🤝', label:'PASS',  color:'text-green-400'   },
       { key:'THINK', icon:'🤔', label:'长考',  color:'text-yellow-400'  },
       { key:'OKASK', icon:'👌', label:'OK?',   color:'text-cyan-400'    },
       { key:'OKBANG',icon:'✅', label:'OK！',  color:'text-emerald-400' },
+      { key:'DICE',  icon:'🎲', label:'骰子',  color:'text-purple-400'  },
+      { key:'GO',    icon:'🚀', label:'GO!',   color:'text-orange-400'  },
     ];
-    const signalCooldowns = reactive({ WAIT:false, PASS:false, THINK:false, OKASK:false, OKBANG:false });
+    const signalCooldowns = reactive({ WAIT:false, PASS:false, THINK:false, OKASK:false, OKBANG:false, DICE:false, GO:false });
     const signalOverlay   = reactive({ visible:false, icon:'', label:'', color:'', sender:'' });
     let _signalTimer = null;
 
@@ -1295,6 +1313,14 @@ createApp({
       setTimeout(() => { signalCooldowns[key] = false; }, 1000);
       const sig = SIGNALS.find(s => s.key === key);
       if (!sig) return;
+      // 骰子：随机点数，替换 icon / label
+      if (key === 'DICE') {
+        const roll = Math.floor(Math.random() * 6);          // 0-5
+        const diceOverlay = { ...sig, icon: DICE_FACES[roll], label: `${roll + 1} 点` };
+        showSignalOverlay(diceOverlay, myNickname.value);
+        room.value?.send('gameAction', { type:'SIGNAL', signal:key, senderName:myNickname.value, diceRoll:roll });
+        return;
+      }
       showSignalOverlay(sig, myNickname.value);
       room.value?.send('gameAction', { type:'SIGNAL', signal:key, senderName:myNickname.value });
     };
@@ -1632,7 +1658,14 @@ createApp({
         // 手势信号：双方都显示（包括观战者）
         if (msg.type==='SIGNAL') {
           const sig = SIGNALS.find(s => s.key === msg.signal);
-          if (sig) showSignalOverlay(sig, msg.senderName || '对手');
+          if (sig) {
+            // 骰子信号：用发送方的结果显示
+            if (msg.signal === 'DICE' && msg.diceRoll !== undefined) {
+              showSignalOverlay({ ...sig, icon: DICE_FACES[msg.diceRoll], label: `${msg.diceRoll + 1} 点` }, msg.senderName || '对手');
+            } else {
+              showSignalOverlay(sig, msg.senderName || '对手');
+            }
+          }
         }
       });
 
@@ -1916,6 +1949,11 @@ createApp({
       const m = {deck:mainDeck, discard:playerDiscard, sideboard:playerSideboard, runeDeck:runeDeck};
       const arr = m[id]; if (arr?.length>1) arr.sort(()=>Math.random()-0.5);
       zoneMenu.visible = false;
+      // 牌堆洗牌动画
+      if (id === 'deck' || id === 'runeDeck') {
+        deckShuffling.value = true;
+        setTimeout(() => { deckShuffling.value = false; }, 520);
+      }
     };
 
     // ══ 单卡特写 & 指示物 ════════════════════════════════════════
@@ -2440,7 +2478,7 @@ createApp({
       getCardBorderClass, getCardGradientClass, getCardTypeTagClass, getCardTypeEmoji, getZoneName,
       cardBorder, cardGradient, runeColor,
       // 指示物召唤
-      showTokenFetch, tokenQuery, tokenResults, spawnTokenCard, onTokenTouchStart, onTokenTouchEnd,
+      showTokenFetch, tokenQuery, tokenResults, spawnTokenCard, onTokenTouchStart, onTokenTouchEnd, deckShuffling,
       // 玩家牌区
       playerHand, playerDiscard, playerSideboard, playerBaseUnits, playerBoardUnits,
       playerStaticCards, fieldCards, fieldPool, playerRunes, playerRuneDeckCount, playerScore, mainDeck, runeDeck,
