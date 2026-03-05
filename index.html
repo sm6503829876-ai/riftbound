@@ -605,9 +605,9 @@ setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) 
             </div>
         </div>
         <p v-if="currentZoneArray.length === 0" class="text-slate-500 text-center mt-16 text-sm">该区域为空</p>
-        <div class="flex-1 overflow-y-auto hide-scrollbar grid grid-cols-4 gap-2.5 content-start pb-16">
+        <div class="flex-1 overflow-y-auto hide-scrollbar flex flex-col gap-1.5 content-start pb-16">
             <div v-for="(card, idx) in currentZoneArray" :key="card.id"
-                 class="w-full aspect-[2/3] rounded-lg overflow-hidden shadow-md relative border-2 cursor-grab active:cursor-grabbing"
+                 class="shrink-0 h-10 rounded-lg overflow-hidden shadow-md relative border cursor-grab active:cursor-grabbing flex items-center"
                  :class="cardBorder(card)"
                  draggable="true"
                  @dragstart="onDragStartFromViewer($event, card, viewingZone, idx)"
@@ -615,23 +615,22 @@ setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) 
                  @touchstart="onCardTouchStartFromViewer($event, card, viewingZone, idx)"
                  @contextmenu.prevent="inspectCard(card, viewingZone)">
                 <template v-if="card.faceDown">
-                    <div class="absolute inset-0 rounded-lg card-back"></div>
-                    <div class="relative z-10 h-full flex items-center justify-center"><span class="text-[8px] text-slate-500 font-bold">盖牌</span></div>
+                    <div class="absolute inset-0 card-back"></div>
+                    <div class="relative z-10 w-full flex items-center justify-center"><span class="text-[10px] text-slate-500 font-bold">盖牌（长按查看）</span></div>
                 </template>
                 <template v-else>
-                <div class="absolute inset-0 rounded-lg" :class="cardGradient(card)"></div>
-                <div class="relative z-10 h-full flex flex-col p-1.5">
-                    <div class="flex justify-between items-start">
-                        <div class="leading-none">
-                            <div class="text-[10px] font-black text-yellow-300">{{ card.energy??'—' }}</div>
-                            <div v-if="card.runic" class="text-[8px] text-cyan-300 leading-none">{{ card.runic }}</div>
-                        </div>
-                        <div v-if="card.might" class="text-[11px] font-black text-red-300 leading-none">{{ card.might }}</div>
-                    </div>
-                    <div class="flex-1 flex items-center justify-center">
-                        <span class="text-[10px] font-bold text-white text-center leading-snug">{{ card.name }}</span>
-                    </div>
-                    <div class="text-[8px] text-slate-400 leading-none">{{ card.type }}</div>
+                <div class="absolute inset-0" :class="cardGradient(card)"></div>
+                <div class="relative z-10 w-full flex items-center gap-2 px-2.5">
+                    <!-- 序号 -->
+                    <span class="text-[9px] text-slate-500 font-mono w-4 shrink-0 text-right">{{ idx + 1 }}</span>
+                    <!-- 费用 -->
+                    <span class="text-[11px] font-black text-yellow-300 w-4 shrink-0 text-center">{{ card.energy??'—' }}</span>
+                    <!-- 卡名 -->
+                    <span class="text-[11px] font-bold text-white truncate flex-1">{{ card.name }}</span>
+                    <!-- 类型 -->
+                    <span class="text-[9px] text-slate-400 shrink-0">{{ card.type }}</span>
+                    <!-- 战力 -->
+                    <span v-if="card.might" class="text-[11px] font-black text-red-300 w-4 shrink-0 text-right">{{ card.might }}</span>
                 </div>
                 </template>
             </div>
