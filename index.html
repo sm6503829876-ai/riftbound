@@ -1168,6 +1168,12 @@ setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) 
             <span class="text-base leading-none">{{ sig.icon }}</span>
             <span class="text-[8px] leading-none font-bold tracking-wide">{{ sig.label }}</span>
         </button>
+        <!-- 重置（竖直）所有卡牌 -->
+        <button @click="untapAll"
+                class="flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl border font-bold transition-all duration-150 active:scale-90 select-none min-w-[3.2rem] border-amber-700/60 bg-amber-950/50 text-amber-200 hover:border-amber-500 hover:bg-amber-900/50">
+            <span class="text-base leading-none">🔄</span>
+            <span class="text-[8px] leading-none font-bold tracking-wide">重置</span>
+        </button>
     </div>
 
     <!-- ─────── 手牌（固定在底部，随牌数自然展开）─────────── -->
@@ -2264,6 +2270,18 @@ createApp({
       room.value?.send('tapCard',{cardId:unit.id,tapped:unit.tapped});
     };
 
+    // 重置（竖直）所有己方卡牌
+    const untapAll = () => {
+      if (isSpectator.value) return;
+      const reset = arr => arr.forEach(u => { if(u&&u.tapped) { u.tapped=false; room.value?.send('tapCard',{cardId:u.id,tapped:false}); }});
+      reset(playerBaseUnits);
+      playerBoardUnits.forEach(lane => reset(lane));
+      reset(playerRunes);
+      [playerStaticCards.legend, playerStaticCards.champion, fieldCards[0], fieldCards[1]].forEach(c => {
+        if(c&&c.tapped) { c.tapped=false; room.value?.send('tapCard',{cardId:c.id,tapped:false}); }
+      });
+    };
+
     // ══ 组牌工具 ════════════════════════════════════════════════
     const dbTab          = ref('browse');   // 'browse' | 'deck'
     const dbSearch       = ref('');
@@ -2487,7 +2505,7 @@ createApp({
       // 操作
       loadDefaultDeck, importDeck,
       viewZone, shuffleZone, openZoneMenu, inspectCard, modifyToken, toggleFaceDown, deleteInspectedCard, renderEffect,
-      drawCard, spawnRune, handleRuneClick, handleRuneDblClick, toggleTap, changeScore,
+      drawCard, spawnRune, handleRuneClick, handleRuneDblClick, toggleTap, untapAll, changeScore,
       onDragStart, onDragStartFromViewer, onDragEndFromViewer,
       onDrop, onDropToDeck, onDropToDiscard, onDropToSideboard, onDropToFieldPool, onDropToRuneDeck, onDropToHand,
       onCardTouchStart, onCardTouchStartFromViewer,
