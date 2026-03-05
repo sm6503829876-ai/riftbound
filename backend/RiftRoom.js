@@ -3,9 +3,13 @@ const colyseus = require('colyseus');
 class RiftRoom extends colyseus.Room {
     onCreate(options) {
         this.maxClients = 8;
+        this.autoDispose = false;         // 防止空房间被立即销毁
         this.setPatchRate(100);           // 100ms（默认50ms），降低带宽消耗
         this.setSimulationInterval(null); // 无需游戏循环
         this.setState({});
+
+        // 高延迟网络：加大座位预留时间（默认8秒，改为30秒）
+        this.seatReservationTime = 30;
 
         this.seats = [null, null];
         this.spectatorMap = new Map();
@@ -149,6 +153,8 @@ class RiftRoom extends colyseus.Room {
 
     // ── 生命周期 ──────────────────────────────────────────────────
     onJoin(client, options) {
+        // 有人加入则取消空房销毁计时
+        if (this._disposeTimeout) { clearTimeout(this._disposeTimeout); this._disposeTimeout = null; }
         console.log(`[${this.roomId}] 👉 ${client.sessionId.slice(0, 6)} 连入 (共 ${this.clients.length} 人)`);
     }
 
@@ -182,7 +188,15 @@ class RiftRoom extends colyseus.Room {
         console.log(`[${this.roomId}] 👥 剩余 ${this.clients.length} 人`);
         this._updateMeta();
         this._broadcastRoster();
+
+        // autoDispose=false 时手动销毁空房间（延迟30s，给重连留时间）
+        if (this.clients.length === 0) {
+            this._disposeTimeout = setTimeout(() => {
+                if (this.clients.length === 0) this.disconnect();
+            }, 30000);
+        }
     }
+
 
     onDispose() {
         console.log(`[${this.roomId}] 💥 房间销毁\n`);
