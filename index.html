@@ -298,6 +298,13 @@ setTimeout(() => { const el = document.getElementById('loading-screen'); if(el) 
         <div class="bg-indigo-900/95 border border-indigo-600 text-indigo-200 text-xs font-bold px-4 py-2 rounded-full shadow-xl whitespace-nowrap">{{ lobbyNotice }}</div>
     </div>
 
+    <!-- 连接中遮罩 -->
+    <div v-if="lobbyConnecting" class="absolute inset-0 bg-slate-950/80 z-[200] flex flex-col items-center justify-center backdrop-blur-sm">
+        <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+        <p class="text-white font-bold text-sm">正在连接服务器…</p>
+        <p class="text-slate-400 text-xs mt-1">网络较慢时可能需要几秒</p>
+    </div>
+
     <!-- 连接错误提示 -->
     <div v-if="lobbyError" class="absolute bottom-24 left-4 right-4 bg-red-950 border border-red-800 text-red-300 text-xs p-3 rounded-xl">
         ⚠️ {{ lobbyError }}
@@ -1243,6 +1250,7 @@ createApp({
     const lobbyLoading      = ref(false);
     const lobbyError        = ref('');
     const lobbyNotice       = ref('');
+    const lobbyConnecting   = ref(false);  // 创建/加入房间连接中
     const directJoinId      = ref('');
     const createRoomModal   = reactive({ visible: false, name: '', passwordEnabled: false, password: '' });
     const joinPasswordModal = reactive({ visible: false, roomId: null, password: '', loading: false });
@@ -1513,6 +1521,7 @@ createApp({
     // ══ 核心：连接到房间，进入游戏屏幕 ═════════════════════════
     const connectAndEnterGame = async (roomId, options = {}) => {
       lobbyError.value = '';
+      lobbyConnecting.value = true;
       try {
         let colRoom;
         if (roomId) {
@@ -1520,16 +1529,20 @@ createApp({
         } else {
           colRoom = await colyseusClient.value.create('rift_battle', options);
         }
-        room.value = colRoom;          // shallowRef，防止 Vue Proxy 破坏 Colyseus 内部
+        room.value = colRoom;
         mySessionId.value = colRoom.sessionId;
         myRoomId.value = colRoom.roomId;
         setupRoomHandlers();
         if (lobbyRefreshTimer) { clearInterval(lobbyRefreshTimer); lobbyRefreshTimer = null; }
-        showRoleOverlay.value = true;  // 进入游戏后先选身份
+        showRoleOverlay.value = true;
         screen.value = 'game';
+        lobbyConnecting.value = false;
         return true;
       } catch(e) {
+        lobbyConnecting.value = false;
         lobbyError.value = '进入房间失败：' + e.message;
+        // 加入失败时自动刷新房间列表（清除已销毁的陈旧房间）
+        fetchRoomList();
         return false;
       }
     };
@@ -1714,41 +1727,41 @@ createApp({
         showSyncNotice('✅ 桌面已同步！');
       });
 
-      // ── 断线检测 & 自动重连 ─────────────────────────────────
+      // ── 断线检测 & 自动重连（5次，递增退避）─────────────────
       room.value.onLeave(code => {
         // code 1000 = 主动离开（用户点"离开"按钮）
         if (code === 1000 || screen.value !== 'game') return;
         // 防止多次触发重连
         if (reconnecting.value) return;
-        // 其他 code = 意外断线 → 尝试重连
         const savedRoomId    = myRoomId.value;
         const savedSessionId = mySessionId.value;
         reconnecting.value = true;
+        const MAX_ATTEMPTS = 5;
 
-        const tryReconnect = async (attemptsLeft) => {
-          if (attemptsLeft <= 0) {
+        const tryReconnect = async (attempt) => {
+          if (attempt > MAX_ATTEMPTS) {
             reconnecting.value = false;
             reconnectMsg.value = '';
             await leaveRoom();
             return;
           }
-          const attempt = 4 - attemptsLeft;
-          reconnectMsg.value = `连接断开，正在重连…（${attempt}/3）`;
-          await new Promise(r => setTimeout(r, 2000 * attempt));
+          reconnectMsg.value = `连接断开，正在重连…（${attempt}/${MAX_ATTEMPTS}）`;
+          // 退避：1s, 2s, 3s, 4s, 5s
+          await new Promise(r => setTimeout(r, 1000 * attempt));
           try {
             const newRoom = await colyseusClient.value.reconnect(savedRoomId, savedSessionId);
             room.value = newRoom;
             mySessionId.value = newRoom.sessionId;
-            setupRoomHandlers();  // 重新注册消息监听（包括 onLeave）
+            setupRoomHandlers();
             reconnecting.value = false;
             reconnectMsg.value = '';
             showSyncNotice('✅ 重连成功！');
           } catch (e) {
-            await tryReconnect(attemptsLeft - 1);
+            await tryReconnect(attempt + 1);
           }
         };
 
-        tryReconnect(3);
+        tryReconnect(1);
       });
     };
 
@@ -2488,7 +2501,7 @@ createApp({
       // 屏幕
       screen, myNickname, loginError, myRole, mySessionId, isSpectator,
       // 大厅
-      roomList, lobbyLoading, lobbyError, lobbyNotice, directJoinId,
+      roomList, lobbyLoading, lobbyError, lobbyNotice, lobbyConnecting, directJoinId,
       createRoomModal, joinPasswordModal, showRoleOverlay,
       enterLobby, fetchRoomList,
       openCreateRoomModal, doCreateRoom, openJoinModal, doJoinWithPassword,

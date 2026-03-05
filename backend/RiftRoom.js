@@ -3,6 +3,8 @@ const colyseus = require('colyseus');
 class RiftRoom extends colyseus.Room {
     onCreate(options) {
         this.maxClients = 8;
+        this.setPatchRate(100);           // 100ms（默认50ms），降低带宽消耗
+        this.setSimulationInterval(null); // 无需游戏循环
         this.setState({});
 
         this.seats = [null, null];
@@ -155,10 +157,10 @@ class RiftRoom extends colyseus.Room {
         console.log(`[${this.roomId}] 🚪 ${client.sessionId.slice(0, 6)} 离开 consented=${consented}`);
 
         if (!consented) {
-            // 意外断开 → 保留席位最多 30 秒等待重连
+            // 意外断开 → 保留席位最多 60 秒等待重连（高延迟网络需更长时间）
             console.log(`[${this.roomId}] ⏳ 等待重连: ${client.sessionId.slice(0, 6)}…`);
             try {
-                await this.allowReconnection(client, 30);
+                await this.allowReconnection(client, 60);
                 // 重连成功：通知在线玩家发送全量同步
                 console.log(`[${this.roomId}] ✅ 重连成功: ${client.sessionId.slice(0, 6)}`);
                 this.seats.forEach(seat => {
