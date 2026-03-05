@@ -23,7 +23,16 @@ app.use("/colyseus-sdk", express.static(
     { maxAge: '30d', immutable: true }
 ));
 
-// 静态文件服务（短缓存 + ETag 自动验证）
+// index.html 不缓存（每次都检查是否有更新）
+app.get('/', (req, res, next) => {
+    res.set('Cache-Control', 'no-cache, must-revalidate');
+    next();
+});
+app.get('/index.html', (req, res, next) => {
+    res.set('Cache-Control', 'no-cache, must-revalidate');
+    next();
+});
+// 其他静态资源（图片、json 等）短缓存 + ETag
 app.use(express.static(path.join(__dirname, ".."), {
     maxAge: '1h',
     etag: true,
